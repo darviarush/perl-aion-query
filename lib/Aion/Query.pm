@@ -3,41 +3,67 @@ use common::sense;
 
 our $VERSION = "0.0.0-prealpha";
 
+require Exporter;
+our @EXPORT = our @EXPORT_OK = qw/
+
+/;
+
 use config {
-    base => 'base',
-    user => 'root',
-    password => 123,
-    host => undef,
-    port => undef,
-    sock => undef,
+    DRIV => 'mysql',
+    BASE => 'base',
+    HOST => undef,
+    PORT => undef,
+    SOCK => undef,
+    USER => 'root',
+    PASS => 123,
+    CONN => [
+        "SET NAMES utf8",
+        "SET sql_mode='NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'",
+    ],
+    DEBUG => 0,
 };
 
-# Коннекты
+sub default_dsn {
+    my $sock = SOCK;
+    $sock //= "/var/run/mysqld/mysqld.sock" if !defined HOST;
+
+    "DBI:${\ DRIV}:database=${\ BASE};${\(defined(HOST)?
+        'host=' . HOST . (defined(PORT)? ':' . PORT: ()) . ';': ())
+    }${\ defined($sock)? 'mysql_socket=' . $sock: ()}"
+}
+
+sub default_connect_options {
+    return default_dsn(), USER, PASS, CONN;
+}
+
+# Коннект к базе и id коннекта
 sub base_connect {
-	my ($config) = @_;
-	my $base = DBI->connect($config->[0], $config->[1], $config->[2], {
+	my ($dsn, $user, $password, $conn) = @_;
+	my $base = DBI->connect($dsn, $user, $password, {
 		RaiseError => 1,
 		PrintError => 0,
-		$config->[0] =~ /^DBI:mysql/ ? (mysql_enable_utf8 => 1): (),
+		$dsn =~ /^DBI:mysql/i ? (mysql_enable_utf8 => 1): (),
 	}) or die "Connect to db failed";
 
-	$base->do($_) for @{$config->[3]};
-	return $base if !wantarray;
+	$base->do($_) for @$conn;
+	return $base unless wantarray;
 	my ($base_connection_id) = $base->selectrow_array("SELECT connection_id()");
 	return $base, $base_connection_id;
 }
 
+# Проверка коннекта и переконнект
 sub connect_respavn {
 	my ($base) = @_;
 	$base->disconnect, undef $base if $base and !$base->ping;
-	($_[0], $_[1]) = base_connect($main_config::mysql) if !$base;
+	($_[0], $_[1]) = base_connect(default_connect_options()) if !$base;
 	return;
 }
 
+# Рестарт коннекта
 sub connect_restart {
 	my ($base) = @_;
 	$base->disconnect if $base;
-	$_[0] = base_connect($main_config::mysql);
+	$_[0] = base_connect(default_connect_options());
 	return;
 }
 
@@ -52,7 +78,7 @@ END {
 # возможно выполняется запрос - нужно его убить
 sub query_stop {
 	# вспомогательное подключение
-	my $signal = base_connect($main_config::mysql);
+	my $signal = base_connect(default_connect_options());
 	$signal->do("KILL HARD " . ($base_connection_id + 0));
 	$signal->disconnect;
 	return;
@@ -65,23 +91,23 @@ sub sql_debug(@) {
 	my ($fn, $query) = @_;
 	my $msg = "$fn: " . (ref $query? np($query): $query);
 	push @DEBUG, $msg;
-	print STDERR $msg, "\n" if $main_config::sql_debug ~~ [1, 3];
+	print STDERR $msg, "\n" if DEBUG;
 }
 
-sub debug_html {
-	join "", map { ("<p class='debug'>", to_html($_), "</p>\n") } @DEBUG;
-}
+# sub debug_html {
+# 	join "", map { ("<p class='debug'>", to_html($_), "</p>\n") } @DEBUG;
+# }
 
-sub debug_text {
-	return "" if !@DEBUG;
-	join "", map { "$_\n\n" } @DEBUG, "";
-}
+# sub debug_text {
+# 	return "" if !@DEBUG;
+# 	join "", map { "$_\n\n" } @DEBUG, "";
+# }
 
-sub debug_array {
-	return if !@DEBUG;
-	$_[0]->{SQL_DEBUG} = \@DEBUG;
-	return;
-}
+# sub debug_array {
+# 	return if !@DEBUG;
+# 	$_[0]->{SQL_DEBUG} = \@DEBUG;
+# 	return;
+# }
 
 
 sub LAST_INSERT_ID() {
