@@ -4,9 +4,10 @@ use common::sense;
 our $VERSION = "0.0.0-prealpha";
 
 require Exporter;
-our @EXPORT = our @EXPORT_OK = qw/
-
-/;
+{ my $scope = \%{__PACKAGE__ . "::"};
+our @EXPORT = our @EXPORT_OK = grep {
+	*{$scope->{$_}}{CODE} && !/^(_|NaN\z)/n
+} keys %$scope }
 
 use config {
     DRIV => 'mysql',
