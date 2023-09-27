@@ -1,12 +1,9 @@
 name = "Aion-Query"
 
-# badges = ["github-actions/test.yml"]
 authority="cpan:DART"
+license="gpl_3"
+
+badges = ["github-actions/test.yml"]
+markdown_maker = "Liveman::MinillaPod2Markdown"
 module_maker="ModuleBuildTiny"
 static_install = "auto"
-
-[release]
-do_not_upload_to_cpan=false
-hooks=[
-    "cp lib/Aion/Query.md README.md"
-]
