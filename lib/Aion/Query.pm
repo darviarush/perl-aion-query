@@ -5,38 +5,52 @@ use common::sense;
 
 our $VERSION = "0.0.0-prealpha";
 
-require Exporter;
-{ my $scope = \%{__PACKAGE__ . "::"};
+use B;
+
+use Exporter qw/import/;
 our @EXPORT = our @EXPORT_OK = grep {
-	*{$scope->{$_}}{CODE} && !/^(_|NaN\z)/n
-} keys %$scope }
+	*Aion::Query{$_}{CODE} && !/^(_|(NaN|import)\z)/n
+} keys %Aion::Query;
 
 use config {
-    DRIV => 'mysql',
-    BASE => 'base',
+	DSN  => undef,
+    DRV  => 'mysql',
+    BASE => 'BASE',
     HOST => undef,
     PORT => undef,
     SOCK => undef,
     USER => 'root',
     PASS => 123,
-    CONN => [
-        "SET NAMES utf8",
-        "SET sql_mode='NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'",
-    ],
+    CONN => undef,
     DEBUG => 0,
 };
 
-sub default_dsn {
-    my $sock = SOCK;
-    $sock //= "/var/run/mysqld/mysqld.sock" if !defined HOST;
+# Формирует DSN на основе конфига
+our $DEFAULT_DSN;
+sub default_dsn() {
+	$DEFAULT_DSN //= do {
+		if(defined DSN) {DSN}
+		elsif(DRV =~ /mysql|mariadb/i) {
+			my $sock = SOCK;
+			$sock //= "/var/run/mysqld/mysqld.sock" if !defined HOST;
 
-    "DBI:${\ DRIV}:database=${\ BASE};${\(defined(HOST)?
-        'host=' . HOST . (defined(PORT)? ':' . PORT: ()) . ';': ())
-    }${\ defined($sock)? 'mysql_socket=' . $sock: ()}"
+			"DBI:${\ DRV}:database=${\ BASE};${\(defined(HOST)?
+				'host=' . HOST . (defined(PORT)? ':' . PORT: ()) . ';': ())
+			}${\ defined($sock)? 'mysql_socket=' . $sock: ()}"
+		}
+		elsif(DRV =~ /sqlite/i) { "DBI:${\ DRV}:dbname=${\ BASE}" }
+		else { die "Using DSN! DRV: ${\ DRV} is'nt supported." }
+	}
 }
 
-sub default_connect_options {
-    return default_dsn(), USER, PASS, CONN;
+my $CONN;
+sub default_connect_options() {
+    return default_dsn, USER, PASS, $CONN //= CONN // do {
+		if(DRV =~ /mysql|mariadb/i) {[
+			"SET NAMES utf8",
+			"SET sql_mode='NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'",
+   		]}
+	};
 }
 
 # Коннект к базе и id коннекта
@@ -58,7 +72,7 @@ sub base_connect {
 sub connect_respavn {
 	my ($base) = @_;
 	$base->disconnect, undef $base if $base and !$base->ping;
-	($_[0], $_[1]) = base_connect(default_connect_options()) if !$base;
+	($_[0], $_[1]) = base_connect(default_connect_options) if !$base;
 	return;
 }
 
@@ -118,7 +132,7 @@ sub LAST_INSERT_ID() {
 }
 
 # Преобразует в строку
-sub to_str($) {
+sub _to_str($) {
 	local($_) = @_;
 	s/[\\']/\\$&/g;
 	s/^(.*)\z/'$1'/s;
@@ -126,7 +140,7 @@ sub to_str($) {
 }
 
 # Преобразует в бинарную строку принятую в MYSQL
-sub to_hex_str($) {
+sub _to_hex_str($) {
 	my ($s) = @_;
 	no utf8;
 	use bytes;
@@ -134,22 +148,21 @@ sub to_hex_str($) {
 	"X'$s'"
 }
 
-
 # Идея перекодирования символов:
 # В базе используется cp1251, поэтому символы, которые в неё не входят, нужно перевести в последовательности.
 # Вид последовательности: °ЧИСЛО_В_254-ричной системе; \x7F
 # Знак ° выбран потому, что он выше 127, соответственно строка из базы данных, содержащая такую последовательность,
 # будет с флагом utf8, что необходимо для обратного перекодирования.
-sub recode_cp1251 {
+sub _recode_cp1251 {
 	my ($s) = @_;
 	our $CIF;
 	$s =~ s/°|[^\Q$CIF\E]/"°${\ to_radix(ord $&, 254) }\x7F"/ge;
 	$s
 }
 
-sub quote($);
-sub quote($) {
-	my ($k) = @_;
+sub quote(;$);
+sub quote(;$) {
+	my ($k) = @_ == 0? $_: @_;
 
 	!defined($k)? "NULL":
 	ref $k eq "ARRAY" && ref $k->[0] eq "ARRAY"? join(", ", map { join "", "(", join(", ", map { quote($_) } @$_), ")" } @$k):
@@ -160,10 +173,10 @@ sub quote($) {
 	Scalar::Util::blessed($k)? $k:
 	$k =~ /^-?(0|[1-9]\d*)(\.\d+)?\z/an && B::svref_2object(\$k) ne "B::PV"? $k:
 	!utf8::is_utf8($k)? (
-		$k =~ /[\x80-\xFF]/a ? to_hex_str($k): #$base->quote($k, DBI::SQL_BINARY):
-			to_str($k)
+		$k =~ /[\x80-\xFF]/a ? _to_hex_str($k): #$base->quote($k, DBI::SQL_BINARY):
+			_to_str($k)
 	):
-	to_str(recode_cp1251($k))
+	_to_str(_recode_cp1251($k))
 }
 
 sub query_prepare (@) {
@@ -171,7 +184,7 @@ sub query_prepare (@) {
 
 	$query =~ s!^[ \t]*(\w+)>>(.*\n?)!$param{$1}? $2: ""!mge;
 	#$query =~ s!^[ \t]*(\w+)\*>(.*\n?)!$param{$1}? join("", map {  } @{$param{$1}}): ""!mge;
-	$query =~ s!:([a-z_]\w*)! exists $param{$1}? quote($param{$1}): die "Не передан параметр :$1 в запрос $query"!ige;
+	$query =~ s!:([a-z_]\w*)! exists $param{$1}? quote($param{$1}): die "The :$1 parameter was not passed."!ige;
 
 	$query
 }
@@ -419,7 +432,7 @@ sub update(@) {
 #
 sub remove(@) {
 	my ($tab, $id) = @_;
-	die "Записи с $tab.id=$id — нет." if !query "DELETE FROM $tab WHERE id=:id", id=>$id;
+	die "Row $tab.id=$id does not exist!" if !query "DELETE FROM $tab WHERE id=:id", id=>$id;
 	$id
 }
 
@@ -512,3 +525,262 @@ sub START_TRANSACTION () {
 }
 
 1;
+
+__END__
+
+=encoding utf-8
+
+=head1 NAME
+
+Aion::Query - functional interface for accessing database mysql and mariadb
+
+=head1 VERSION
+
+0.0.0-prealpha
+
+=head1 SYNOPSIS
+
+File config.pm:
+
+	package config;
+	
+	module_config Aion::Query => {
+	    DRV  => "SQLite",
+	    BASE => "test-base.sqlite",
+	};
+	
+	1;
+
+
+
+	use Aion::Query;
+	
+	query "CREATE TABLE author (
+	    id INT PRIMARY KEY AUTOINCREMENT,
+	    name STRING NOT NULL,
+	    books INT NOT NULL,
+	    UNIQUE name_unq (name)
+	)";
+	
+	insert "author", name => "Pushkin A.S."     # -> 1
+	touch "author", name => "Pushkin A.S."      # -> 1
+	touch "author", name => "Pushkin A."        # -> 2
+	
+	query "SELECT count(*) FROM author"  # -> 2
+	
+	my @rows = query "SELECT * FROM author WHERE name like :name",
+	    name => "P%",
+	;
+	
+	\@rows # --> [{id => 1, name => "Pushkin A.S."}, {id => 2, name => "Pushkin A."}]
+
+=head1 DESCRIPTION
+
+Functional interface for accessing database mysql or mariadb.
+
+=head1 SUBROUTINES
+
+=head2 query ($query, %params)
+
+It provide SQL (DCL, DDL, DQL and DML) queries to DBMS with quoting params.
+
+	query "UPDATE author SET name=:name WHERE id=1", name => 'Pupkin I.' # -> 1
+
+=head2 LAST_INSERT_ID ()
+
+Returns last insert id.
+
+	query "INSERT author SET name = :name", name => "Alice";
+	LAST_INSERT_ID  # -> 2
+
+=head2 quote ($scalar)
+
+Quoted scalar for SQL-query.
+
+	quote "abc"     # => 'abc'
+	quote [1,2,"5"] # => 1,2,'5'
+	
+	map quote, -6, "-6", 1.5, "1.5" # --> [-6, "'-6'", 1.5, "'1.5'"]
+
+=head2 query_prepare ($query, %param)
+
+Replace the parameters in C<$query>. Parameters quotes by the C<quote>.
+
+	query_prepare "INSERT author SET name = :name", name => "Alice"  # => INSERT author SET name = 'Alice'
+
+=head2 query_do ($query)
+
+Execution query and returns it result.
+
+	query_do "SELECT count(*) FROM author"  # -> 2
+	query_do "SELECT id FROM author WHERE id=2"  # --> [{id=>2}]
+
+=head2 query_ref ($query, %kw)
+
+As C<query>, but always returns a reference.
+
+	my @res = query_ref "SELECT id FROM author WHERE id=:id", id => 2;
+	\@res  # --> [[ {id=>2} ]]
+
+=head2 query_sth ($query, %kw)
+
+As query, but returns C<$sth>.
+
+	my $sth = query_sth "SELECT * FROM author";
+	my @rows;
+	while(my $row = $sth->selectall_arrayref) {
+	    push @rows, $row;
+	}
+	$sth->final;
+	
+	0+@rows  # -> 3
+
+=head2 query_slice ($key, $val, @args)
+
+.
+
+	query_slice($key, $val, @args)  # -> .3
+
+=head2 query_col ()
+
+.
+
+	query_col  # -> .3
+
+=head2 query_row ()
+
+	query_row  # -> .3
+
+=head2 query_row_ref ()
+
+	query_row_ref  # -> .3
+
+=head2 query_scalar ()
+
+	query_scalar  # -> .3
+
+=head2 make_query_for_order ($order, $next)
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->make_query_for_order($order, $next)  # -> .3
+
+=head2 settings ($id, $value)
+
+Устанавливает или возвращает ключ из таблицы settings
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->settings($id, $value)  # -> .3
+
+=head2 load_by_id ($tab, $pk, $fields, @options)
+
+возвращает запись по её pk
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->load_by_id($tab, $pk, $fields, @options)  # -> .3
+
+=head2 insert ($tab, %x)
+
+Добавляет запись и возвращает её id
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->insert($tab, %x)  # -> .3
+
+=head2 update ($tab, $id, %x)
+
+	update($tab, $id, %x)  # -> .3
+
+=head2 remove ($tab, $id)
+
+Remove row from table by it id, and returns id.
+
+	remove "author", 6  # -> 6
+
+=head2 query_id ()
+
+	query_id  # -> .3
+
+=head2 stores ($tab, $rows, %opt)
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->stores($tab, $rows, %opt)  # -> .3
+
+=head2 store ()
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->store  # -> .3
+
+=head2 touch ()
+
+Сверхмощная функция: возвращает pk, а если его нет - создаёт или обновляет запись и всё равно возвращает
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->touch  # -> .3
+
+=head2 START_TRANSACTION ()
+
+возвращает переменную, на которой нужно установить commit, иначе происходит откат
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->START_TRANSACTION  # -> .3
+
+=head2 default_dsn ()
+
+Default DSN for C<< DBI-E<gt>connect >>.
+
+	default_dsn  # => 123
+
+=head2 default_connect_options ()
+
+DSN, USER, PASSWORD and commands after connect.
+
+	[default_connect_options]  # --> []
+
+=head2 base_connect ($dsn, $user, $password, $conn)
+
+Connect to base and returns connect and it identify.
+
+	my ($dbh, $connect_id) = base_connect("", "toor", "toorpasswd", [
+	    "SET NAMES utf8",
+	    "SET sql_mode='NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'",
+	]);
+	
+	ref $dbh     # => 123
+	$connect_id  # -> 123
+
+=head2 connect_respavn ($base)
+
+Connection check and reconnection.
+
+	connect_respavn($base)  # -> .3
+
+=head2 connect_restart ($base)
+
+Рестарт коннекта
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->connect_restart($base)  # -> .3
+
+=head2 query_stop ()
+
+возможно выполняется запрос - нужно его убить
+
+	my $aion_query = Aion::Query->new;
+	$aion_query->query_stop  # -> .3
+
+=head2 sql_debug ($fn, $query)
+
+.
+
+	sql_debug($fn, $query)  # -> .3
+
+=head1 AUTHOR
+
+Yaroslav O. Kosmina LL<mailto:dart@cpan.org>
+
+=head1 LICENSE
+
+⚖ B<GPLv3>
+
+=head1 COPYRIGHT
+
+The Aion::Surf module is copyright © 2023 Yaroslav O. Kosmina. Rusland. All rights reserved.
