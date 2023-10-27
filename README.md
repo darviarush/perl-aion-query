@@ -86,6 +86,10 @@ Quoted scalar for SQL-query.
 quote "abc"     # => 'abc'
 quote 123       # => 123
 quote "123"     # => '123'
+quote(0+"123")  # => 123
+quote(123 . "") # => '123'
+#quote 123.0     # => 123.0
+#quote(0.0+"123")  # => 123.0
 quote [1,2,"5"] # => 1, 2, '5'
 
 [map quote, -6, "-6", 1.5, "1.5"] # --> [-6, "'-6'", 1.5, "'1.5'"]
@@ -160,8 +164,9 @@ Returns one row.
 ```perl
 query_row "SELECT name FROM author WHERE id=2" # --> {name => "Pushkin A."}
 
-my @row = query_row "SELECT id, name FROM author WHERE id=2";
-\@row # --> [2, "Pushkin A."]
+my ($id, $name) = query_row "SELECT id, name FROM author WHERE id=2";
+$id    # -> 2
+$name  # => Pushkin A.
 ```
 
 ## query_row_ref ($query, %params)
@@ -185,14 +190,14 @@ query_scalar "SELECT name FROM author WHERE id=2" # => Pushkin A.
 
 ## make_query_for_order ($order, $next)
 
-Creates a condition for requesting a page not by offset, but by cursor pagination.
+Creates a condition for requesting a page not by offset, but by **cursor pagination**.
 
 To do this, it receives `$order` of the SQL query and `$next` - a link to the next page.
 
 ```perl
 my ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", undef;
 
-$select     # => concat(name,',',id)
+$select     # => name || ',' || id
 $where      # -> 1
 $order_sel  # -> undef
 
@@ -202,12 +207,14 @@ my $last = pop @rows;
 
 ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", $last->{next};
 $select     # => concat(name,',',id)
-$where      # -> 1
+$where      # => (name < 'Pushkin A.'\nOR name = 'Pushkin A.' AND id >= '2')
 $order_sel  # -> undef
 ```
 
-See article [Paging pages on social networks
+See also:
+1. Article [Paging pages on social networks
 ](https://habr.com/ru/articles/674714/).
+2. [SQL::SimpleOps->SelectCursor](https://metacpan.org/dist/SQL-SimpleOps/view/lib/SQL/SimpleOps.pod#SelectCursor)
 
 ## settings ($id, $value)
 

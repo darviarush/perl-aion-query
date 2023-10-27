@@ -85,7 +85,9 @@ done_testing; }; subtest 'quote ($scalar)' => sub {
 ::is scalar do {quote "abc"}, "'abc'", 'quote "abc"     # => \'abc\'';
 ::is scalar do {quote 123}, "123", 'quote 123       # => 123';
 ::is scalar do {quote "123"}, "'123'", 'quote "123"     # => \'123\'';
-::is scalar do {quote [1,2,"5"]}, "1, 2, '5'", 'quote [1,2,"5"] # => 1, 2, \'5\'';
+::is scalar do {quote(0+"123")}, "123", 'quote(0+"123")  # => 123';
+::is scalar do {quote(123 . "")}, "'123'", 'quote(123 . "") # => \'123\'';
+#quote 123.0     #quote(0.0+"123")  ::is scalar do {quote [1,2,"5"]}, "1, 2, '5'", 'quote [1,2,"5"] # => 1, 2, \'5\'';
 
 ::is_deeply scalar do {[map quote, -6, "-6", 1.5, "1.5"]}, scalar do {[-6, "'-6'", 1.5, "'1.5'"]}, '[map quote, -6, "-6", 1.5, "1.5"] # --> [-6, "\'-6\'", 1.5, "\'1.5\'"]';
 
@@ -159,8 +161,9 @@ done_testing; }; subtest 'query_col ($query, %params)' => sub {
 done_testing; }; subtest 'query_row ($query, %params)' => sub { 
 ::is_deeply scalar do {query_row "SELECT name FROM author WHERE id=2"}, scalar do {{name => "Pushkin A."}}, 'query_row "SELECT name FROM author WHERE id=2" # --> {name => "Pushkin A."}';
 
-my @row = query_row "SELECT id, name FROM author WHERE id=2";
-::is_deeply scalar do {\@row}, scalar do {[2, "Pushkin A."]}, '\@row # --> [2, "Pushkin A."]';
+my ($id, $name) = query_row "SELECT id, name FROM author WHERE id=2";
+::is scalar do {$id}, scalar do{2}, '$id    # -> 2';
+::is scalar do {$name}, "Pushkin A.", '$name  # => Pushkin A.';
 
 # 
 # ## query_row_ref ($query, %params)
@@ -184,14 +187,14 @@ done_testing; }; subtest 'query_scalar ($query, %params)' => sub {
 # 
 # ## make_query_for_order ($order, $next)
 # 
-# Creates a condition for requesting a page not by offset, but by cursor pagination.
+# Creates a condition for requesting a page not by offset, but by **cursor pagination**.
 # 
 # To do this, it receives `$order` of the SQL query and `$next` - a link to the next page.
 # 
 done_testing; }; subtest 'make_query_for_order ($order, $next)' => sub { 
 my ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", undef;
 
-::is scalar do {$select}, "concat(name,',',id)", '$select     # => concat(name,\',\',id)';
+::is scalar do {$select}, "name || ',' || id", '$select     # => name || \',\' || id';
 ::is scalar do {$where}, scalar do{1}, '$where      # -> 1';
 ::is scalar do {$order_sel}, scalar do{undef}, '$order_sel  # -> undef';
 
@@ -201,12 +204,14 @@ my $last = pop @rows;
 
 ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", $last->{next};
 ::is scalar do {$select}, "concat(name,',',id)", '$select     # => concat(name,\',\',id)';
-::is scalar do {$where}, scalar do{1}, '$where      # -> 1';
+::is scalar do {$where}, "(name < 'Pushkin A.'\nOR name = 'Pushkin A.' AND id >= '2')", '$where      # => (name < \'Pushkin A.\'\nOR name = \'Pushkin A.\' AND id >= \'2\')';
 ::is scalar do {$order_sel}, scalar do{undef}, '$order_sel  # -> undef';
 
 # 
-# See article [Paging pages on social networks
+# See also:
+# 1. Article [Paging pages on social networks
 # ](https://habr.com/ru/articles/674714/).
+# 2. [SQL::SimpleOps->SelectCursor](https://metacpan.org/dist/SQL-SimpleOps/view/lib/SQL/SimpleOps.pod#SelectCursor)
 # 
 # ## settings ($id, $value)
 # 
