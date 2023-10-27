@@ -207,8 +207,10 @@ $where      # -> 1
 $order_sel  # -> undef
 ```
 
-See article [Paging pages on social networks
+See also:
+1. Article [Paging pages on social networks
 ](https://habr.com/ru/articles/674714/).
+2. [SQL::SimpleOps->SelectCursor](https://metacpan.org/dist/SQL-SimpleOps/view/lib/SQL/SimpleOps.pod#SelectCursor)
 
 ## settings ($id, $value)
 
