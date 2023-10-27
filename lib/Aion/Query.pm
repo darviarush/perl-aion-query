@@ -6,11 +6,13 @@ use common::sense;
 our $VERSION = "0.0.0-prealpha";
 
 use B;
+use DBI;
 
 use Exporter qw/import/;
 our @EXPORT = our @EXPORT_OK = grep {
-	*Aion::Query{$_}{CODE} && !/^(_|(NaN|import)\z)/n
-} keys %Aion::Query;
+	ref \$Aion::Query::{$_} eq "GLOB"
+		&& *{$Aion::Query::{$_}}{CODE} && !/^(_|(NaN|import)\z)/n
+} keys %Aion::Query::;
 
 use config {
 	DSN  => undef,
@@ -23,6 +25,8 @@ use config {
     PASS => 123,
     CONN => undef,
     DEBUG => 0,
+	MAX_QUERY_ERROR => 1000,
+	BQ => 1,
 };
 
 # Формирует DSN на основе конфига
@@ -34,9 +38,13 @@ sub default_dsn() {
 			my $sock = SOCK;
 			$sock //= "/var/run/mysqld/mysqld.sock" if !defined HOST;
 
-			"DBI:${\ DRV}:database=${\ BASE};${\(defined(HOST)?
-				'host=' . HOST . (defined(PORT)? ':' . PORT: ()) . ';': ())
-			}${\ defined($sock)? 'mysql_socket=' . $sock: ()}"
+			"DBI:${\ DRV}:database=${\ BASE};${\
+				(defined(HOST)?
+					'host=' . HOST
+					. (defined(PORT)? ':' . PORT: ())
+					. ';': ()
+				)
+			}${\ (defined($sock)? 'mysql_socket=' . $sock: ()) }"
 		}
 		elsif(DRV =~ /sqlite/i) { "DBI:${\ DRV}:dbname=${\ BASE}" }
 		else { die "Using DSN! DRV: ${\ DRV} is'nt supported." }
@@ -50,6 +58,7 @@ sub default_connect_options() {
 			"SET NAMES utf8",
 			"SET sql_mode='NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'",
    		]}
+		else {[]}
 	};
 }
 
@@ -64,7 +73,9 @@ sub base_connect {
 
 	$base->do($_) for @$conn;
 	return $base unless wantarray;
-	my ($base_connection_id) = $base->selectrow_array("SELECT connection_id()");
+	my ($base_connection_id) = $dsn =~ /^DBI:(mysql|mariadb)/i
+		? $base->selectrow_array("SELECT connection_id()")
+		: -1;
 	return $base, $base_connection_id;
 }
 
@@ -78,9 +89,9 @@ sub connect_respavn {
 
 # Рестарт коннекта
 sub connect_restart {
-	my ($base) = @_;
+	my ($base, $base_connection_id) = @_;
 	$base->disconnect if $base;
-	$_[0] = base_connect(default_connect_options());
+	($_[0], $_[1]) = base_connect(default_connect_options());
 	return;
 }
 
@@ -128,7 +139,7 @@ sub sql_debug(@) {
 
 
 sub LAST_INSERT_ID() {
-	query_scalar("SELECT LAST_INSERT_ID()");
+	$base->last_insert_id
 }
 
 # Преобразует в строку
@@ -148,6 +159,17 @@ sub _to_hex_str($) {
 	"X'$s'"
 }
 
+# Использованы символы из кодировки cp1251, что нужно для корректной записи в таблицы
+our $CIF = join "", "0".."9", "A".."Z", "a".."z", "_-", # 64 символа для 64-ричной системы счисления
+	(map chr, ord "А" .. ord "Я"), "ЁЂЃЉЊЌЋЏЎЈҐЄЇІЅ",
+	(map chr, ord "а" .. ord "я"), "ёђѓљњќћџўјґєїіѕ",
+	"‚„…†‡€‰‹‘’“”•–—™›¤¦§©«¬­®°±µ¶·№»",	do { no utf8; chr 0xa0 }, # небуквенные символы из cp1251
+	"!\"#\$%&'()*+,./:;<=>?\@[\\]^`{|}~", # символы пунктуации ASCII
+	" ", # пробел
+	(map chr, 0 .. 0x1F, 0x7F), # управляющие символы ASCII
+	# символ 152 (0x98) в cp1251 отсутствует.
+;
+
 # Идея перекодирования символов:
 # В базе используется cp1251, поэтому символы, которые в неё не входят, нужно перевести в последовательности.
 # Вид последовательности: °ЧИСЛО_В_254-ричной системе; \x7F
@@ -155,14 +177,14 @@ sub _to_hex_str($) {
 # будет с флагом utf8, что необходимо для обратного перекодирования.
 sub _recode_cp1251 {
 	my ($s) = @_;
-	our $CIF;
+	return $s unless BQ;
 	$s =~ s/°|[^\Q$CIF\E]/"°${\ to_radix(ord $&, 254) }\x7F"/ge;
 	$s
 }
 
 sub quote(;$);
 sub quote(;$) {
-	my ($k) = @_ == 0? $_: @_;
+	my $k = @_ == 0? $_: $_[0];
 
 	!defined($k)? "NULL":
 	ref $k eq "ARRAY" && ref $k->[0] eq "ARRAY"? join(", ", map { join "", "(", join(", ", map { quote($_) } @$_), ")" } @$k):
@@ -171,7 +193,11 @@ sub quote(;$) {
 	ref $k eq "REF" && ref $$k eq "HASH"? join(", ", map { join "", $_, " = ", quote($$k->{$_}) } sort keys %$$k):
 	ref $k eq "SCALAR"? $$k:
 	Scalar::Util::blessed($k)? $k:
-	$k =~ /^-?(0|[1-9]\d*)(\.\d+)?\z/an && B::svref_2object(\$k) ne "B::PV"? $k:
+	$k =~ /^-?(0|[1-9]\d*)(\.\d+)?\z/an
+		&& ref(@_ == 0
+			? B::svref_2object(\$_)
+			: B::svref_2object(\$_[0])
+		) ne "B::PV"? $k:
 	!utf8::is_utf8($k)? (
 		$k =~ /[\x80-\xFF]/a ? _to_hex_str($k): #$base->quote($k, DBI::SQL_BINARY):
 			_to_str($k)
@@ -199,7 +225,7 @@ sub query_do($) {
 
 			my $r = $base->selectall_arrayref($query, { Slice => {} });
 
-			if(defined $r) {
+			if(defined $r and BQ) {
 				for my $row (@$r) {
 					for my $k (keys %$row) {
 						$row->{$k} =~ s/°([^\x7F]{1,7})\x7F/chr from_radix($1, 254)/ge if utf8::is_utf8($row->{$k});
@@ -211,7 +237,7 @@ sub query_do($) {
 			0 + $base->do($query)
 		}
 	};
-	die "$@\n" . (length($query)>$main_config::max_query_error? substr($query, 0, $main_config::max_query_error) . " ...": $query) if $@;
+	die +(length($query)>MAX_QUERY_ERROR? substr($query, 0, MAX_QUERY_ERROR) . " ...": $query) . "\n\n$@" if $@;
 
 	$res
 }
@@ -222,7 +248,7 @@ sub query_ref(@) {
 	$query = query_prepare($query, %kw) if @_>1;
 	my $res = query_do($query);
 	if($map && ref $res eq "ARRAY") {
-		include $map;
+		eval "require $map" or die unless UNIVERSAL::can($map, "new");
 		[map { $map->new(%$_) } @$res]
 	} else {
 		$res
@@ -306,7 +332,7 @@ sub query_col(@) {
 	return [query_col @_] if !wantarray;
 
 	my $rows = query_ref(@_);
-	die "Приемлем только один столбец!" if @$rows and 1 != keys %{$rows->[0]};
+	die "Only one column is acceptable!" if @$rows and 1 != keys %{$rows->[0]};
 
 	map { my ($k, $v) = %$_; $v } @$rows
 }
@@ -317,7 +343,7 @@ sub query_col(@) {
 #
 sub query_row_ref(@) {
 	my $rows = query_ref(@_);
-	die "Несколько строк!" if @$rows>1;
+	die "A few lines!" if @$rows>1;
 	$rows->[0]
 }
 
@@ -336,8 +362,8 @@ sub query_row(@) {
 #
 sub query_scalar(@) {
 	my $rows = query_ref(@_);
-	die "Несколько строк!" if @$rows>1;
-	die "Приемлем только один столбец! " . keys %{$rows->[0]} if @$rows and 1 != keys %{$rows->[0]};
+	die "A few lines!" if @$rows>1;
+	die "Only one column is acceptable! " . keys %{$rows->[0]} if @$rows and 1 != keys %{$rows->[0]};
 	my ($k, $v) = %{$rows->[0]};
 	$v
 }
@@ -353,7 +379,7 @@ sub make_query_for_order(@) {
 
 	my @orders = split /\s*,\s*/, $order;
 	my @order_direct;
-	my @order_sel = map { my $x=$_; push @order_direct, $x=~s/\s+(asc|desc)\s*$//e ? $1: "asc"; $x } @orders;
+	my @order_sel = map { my $x=$_; push @order_direct, $x=~s/\s+(asc|desc)\s*$//ie ? lc $1: "asc"; $x } @orders;
 
 	my $select = @order_sel==1? $order_sel[0]: join "", "concat(", join(",',',", @order_sel), ")";
 
@@ -396,7 +422,7 @@ sub settings($;$) {
 
 	return remove("settings" => $id) if !defined $value;
 
-	query("INSERT INTO settings (id, value) VALUES (:id, :value) ON DUPLICATE KEY UPDATE value=values(value)",
+	store('settings',
 		id => $id,
 		value => to_json($value),
 	);
@@ -409,10 +435,20 @@ sub load_by_id(@) {
 	query_row("SELECT $fields FROM $tab WHERE id=:id LIMIT 2", @options, id=>$pk)
 }
 
+# Проверяет драйвер БД на имена
+sub _check_drv {
+	my ($dbh, $drv) = @_;
+	$dbh->{Driver}{Name} =~ /^($drv)/ain
+}
+
 # Добавляет запись и возвращает её id
 sub insert(@) {
 	my ($tab, %x) = @_;
-	query "INSERT INTO $tab SET :set", set => \\%x;
+	if(_check_drv($base, "mysql|mariadb")) {
+		query "INSERT INTO $tab SET :set", set => \\%x;
+	} else {
+		stores($tab, [\%x], insert => 1);
+	}
 	LAST_INSERT_ID()
 }
 
@@ -422,7 +458,7 @@ sub insert(@) {
 #
 sub update(@) {
 	my ($tab, $id, %x) = @_;
-	die "Записи с $tab.id=$id — нет." if !query "UPDATE $tab SET :set WHERE id=:id", id=>$id, set => \\%x;
+	die "Row $tab.id=$id is not!" if !query "UPDATE $tab SET :set WHERE id=:id", id=>$id, set => \\%x;
 	$id
 }
 
@@ -454,12 +490,16 @@ sub query_id(@) {
 	ref $pk? $v: $v->{$pk}
 }
 
-# сохраняет данные (update или insert)
+# UPSERT: сохраняет данные (update или insert)
 #
 #	stores "tab", [{word=>1}, {word=>2}];
 #
+sub stores(@);
 sub stores(@) {
 	my ($tab, $rows, %opt) = @_;
+
+	my ($ignore, $insert) = delete @opt{qw/ignore insert/};
+	die "Keys ${\ join('', )}" if keys %opt;
 
 	my @keys = sort keys %{$rows->[0]};
 	die "No fields in bean $tab!" if !@keys;
@@ -468,17 +508,40 @@ sub stores(@) {
 
 	my $values = join ",\n", map { my $row = $_; join "", "(", quote([map $row->{$_}, @keys]), ")" } @$rows;
 
-	if($opt{insert} || $opt{ignore}) {
-		my $ignore = $opt{ignore}? "IGNORE ": "";
-		my $query = "INSERT ${ignore}INTO $tab ($fields) VALUES $values";
-		return query_do($query);
+	if($insert) {
+		my $query = "INSERT INTO $tab ($fields) VALUES $values";
+		query_do($query);
 	}
-
-	my $fupdate = join ", ", map "$_ = values($_)", @keys;
-
-	my $query = "INSERT INTO $tab ($fields) VALUES $values ON DUPLICATE KEY UPDATE $fupdate";
-
-	query_do($query)
+	elsif(_check_drv($base, "mysql|mariadb")) {
+		if($ignore) {
+			my $query = "INSERT IGNORE INTO $tab ($fields) VALUES $values";
+			query_do($query);
+		}
+		else {
+			my $fupdate = join ", ", map "$_ = values($_)", @keys;
+			my $query = "INSERT INTO $tab ($fields) VALUES $values ON DUPLICATE KEY UPDATE $fupdate";
+			query_do($query);
+		}
+	}
+	elsif(_check_drv($base, 'Pg|sqlite')) {
+		if($ignore) {
+			my $query = "INSERT INTO $tab ($fields) VALUES $values ON CONFLICT DO NOTHING";
+			query_do($query);
+		} else {
+			my $fupdate = join ", ", map "$_ = excluded.$_", @keys;
+			my $query = "INSERT INTO $tab ($fields) VALUES $values ON CONFLICT DO UPDATE SET $fupdate";
+			query_do($query);
+		}
+	}
+	else {
+		my $count = 0;
+		if($ignore) {
+			$count += eval { stores $tab, [$_], insert => 1 } for @$rows;
+		} else {
+			$count += stores $tab, [$_] for @$rows;
+		}
+		$count
+	}
 }
 
 # сохраняет данные (update или insert)
@@ -540,13 +603,14 @@ Aion::Query - functional interface for accessing database mysql and mariadb
 
 =head1 SYNOPSIS
 
-File config.pm:
+File .config.pm:
 
 	package config;
 	
-	module_config Aion::Query => {
+	config_module Aion::Query => {
 	    DRV  => "SQLite",
 	    BASE => "test-base.sqlite",
+	    BQ => 0,
 	};
 	
 	1;
@@ -556,51 +620,66 @@ File config.pm:
 	use Aion::Query;
 	
 	query "CREATE TABLE author (
-	    id INT PRIMARY KEY AUTOINCREMENT,
-	    name STRING NOT NULL,
-	    books INT NOT NULL,
-	    UNIQUE name_unq (name)
+	    id INTEGER PRIMARY KEY AUTOINCREMENT,
+	    name TEXT NOT NULL UNIQUE
 	)";
 	
-	insert "author", name => "Pushkin A.S."     # -> 1
-	touch "author", name => "Pushkin A.S."      # -> 1
-	touch "author", name => "Pushkin A."        # -> 2
+	insert "author", name => "Pushkin A.S." # -> 1
 	
-	query "SELECT count(*) FROM author"  # -> 2
+	touch "author", name => "Pushkin A."    # -> 2
+	touch "author", name => "Pushkin A.S."  # -> 1
+	touch "author", name => "Pushkin A."    # -> 2
 	
-	my @rows = query "SELECT * FROM author WHERE name like :name",
+	query_scalar "SELECT count(*) FROM author"  # -> 2
+	
+	my @rows = query "SELECT *
+	FROM author
+	WHERE 1
+	    if_name>> AND name like :name
+	",
+	    if_name => Aion::Query::BQ == 0,
 	    name => "P%",
 	;
 	
 	\@rows # --> [{id => 1, name => "Pushkin A.S."}, {id => 2, name => "Pushkin A."}]
+	
+	$Aion::Query::DEBUG[1]  # => query: INSERT INTO author (name) VALUES ('Pushkin A.S.')
 
 =head1 DESCRIPTION
 
-Functional interface for accessing database mysql or mariadb.
+When constructing queries, many disparate conditions are used, usually separated by different methods.
+
+C<Aion::Query> uses a different approach, which allows you to construct an SQL query in a query using a simple template engine.
+
+The second problem is placing unicode characters into single-byte encodings, which reduces the size of the database. So far it has been solved only for the B<cp1251> encoding. It is controlled by the parameter C<BQ = 1>.
 
 =head1 SUBROUTINES
 
 =head2 query ($query, %params)
 
-It provide SQL (DCL, DDL, DQL and DML) queries to DBMS with quoting params.
+It provide SQL (DCL, DDL, DQL and DML) queries to DBMS with quoting params and .
 
-	query "UPDATE author SET name=:name WHERE id=1", name => 'Pupkin I.' # -> 1
+	query "SELECT * FROM author WHERE name=:name", name => 'Pushkin A.S.' # --> [{id=>1, name=>"Pushkin A.S."}]
 
 =head2 LAST_INSERT_ID ()
 
 Returns last insert id.
 
-	query "INSERT author SET name = :name", name => "Alice";
-	LAST_INSERT_ID  # -> 2
+	query "INSERT INTO author (name) VALUES (:name)", name => "Alice"  # -> 1
+	#LAST_INSERT_ID  # -> 3
 
 =head2 quote ($scalar)
 
 Quoted scalar for SQL-query.
 
 	quote "abc"     # => 'abc'
-	quote [1,2,"5"] # => 1,2,'5'
+	quote 123       # => 123
+	quote "123"     # => '123'
+	quote [1,2,"5"] # => 1, 2, '5'
 	
-	map quote, -6, "-6", 1.5, "1.5" # --> [-6, "'-6'", 1.5, "'1.5'"]
+	[map quote, -6, "-6", 1.5, "1.5"] # --> [-6, "'-6'", 1.5, "'1.5'"]
+	
+	quote \"without quote"  # => without quote
 
 =head2 query_prepare ($query, %param)
 
@@ -612,7 +691,7 @@ Replace the parameters in C<$query>. Parameters quotes by the C<quote>.
 
 Execution query and returns it result.
 
-	query_do "SELECT count(*) FROM author"  # -> 2
+	query_do "SELECT count(*) as n FROM author"  # --> [{n=>3}]
 	query_do "SELECT id FROM author WHERE id=2"  # --> [{id=>2}]
 
 =head2 query_ref ($query, %kw)
@@ -624,104 +703,171 @@ As C<query>, but always returns a reference.
 
 =head2 query_sth ($query, %kw)
 
-As query, but returns C<$sth>.
+As C<query>, but returns C<$sth>.
 
 	my $sth = query_sth "SELECT * FROM author";
 	my @rows;
-	while(my $row = $sth->selectall_arrayref) {
+	while(my $row = $sth->fetchrow_arrayref) {
 	    push @rows, $row;
 	}
-	$sth->final;
+	$sth->finish;
 	
 	0+@rows  # -> 3
 
 =head2 query_slice ($key, $val, @args)
 
-.
+As query, plus converts the result into the desired data structure.
 
-	query_slice($key, $val, @args)  # -> .3
+	my %author = query_slice name => "id", "SELECT id, name FROM author";
+	\%author  # --> {"Pushkin A.S." => 1, "Pushkin A." => 2, "Alice" => 3}
 
-=head2 query_col ()
+=head2 query_col ($query, %params)
 
-.
+Returns one column.
 
-	query_col  # -> .3
+	query_col "SELECT name FROM author ORDER BY name" # --> ["Alice", "Pushkin A.", "Pushkin A.S."]
+	
+	eval {query_col "SELECT id, name FROM author"}; $@  # ~> Only one column is acceptable!
 
-=head2 query_row ()
+=head2 query_row ($query, %params)
 
-	query_row  # -> .3
+Returns one row.
 
-=head2 query_row_ref ()
+	query_row "SELECT name FROM author WHERE id=2" # --> {name => "Pushkin A."}
+	
+	my @row = query_row "SELECT id, name FROM author WHERE id=2";
+	\@row # --> [2, "Pushkin A."]
 
-	query_row_ref  # -> .3
+=head2 query_row_ref ($query, %params)
 
-=head2 query_scalar ()
+As C<query_row>, but retuns array reference always.
 
-	query_scalar  # -> .3
+	my @x = query_row_ref "SELECT name FROM author WHERE id=2";
+	\@x # --> [{name => "Pushkin A."}]
+	
+	eval {query_row_ref "SELECT name FROM author"}; $@  # ~> A few lines!
+
+=head2 query_scalar ($query, %params)
+
+Returns scalar.
+
+	query_scalar "SELECT name FROM author WHERE id=2" # => Pushkin A.
 
 =head2 make_query_for_order ($order, $next)
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->make_query_for_order($order, $next)  # -> .3
+Creates a condition for requesting a page not by offset, but by cursor pagination.
+
+To do this, it receives C<$order> of the SQL query and C<$next> - a link to the next page.
+
+	my ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", undef;
+	
+	$select     # => concat(name,',',id)
+	$where      # -> 1
+	$order_sel  # -> undef
+	
+	my @rows = query "SELECT $select as next FROM author WHERE $where LIMIT 2";
+	
+	my $last = pop @rows;
+	
+	($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", $last->{next};
+	$select     # => concat(name,',',id)
+	$where      # -> 1
+	$order_sel  # -> undef
+
+See article LL<https://habr.com/ru/articles/674714/>.
 
 =head2 settings ($id, $value)
 
-Устанавливает или возвращает ключ из таблицы settings
+Sets or returns a key from a table C<settings>.
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->settings($id, $value)  # -> .3
+	query "CREATE TABLE sessings(
+	    id TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	)";
+	
+	settings "x1", 10;
+	settings "x1"  # -> 10
 
 =head2 load_by_id ($tab, $pk, $fields, @options)
 
-возвращает запись по её pk
+Returns the entry by its id.
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->load_by_id($tab, $pk, $fields, @options)  # -> .3
+	load_by_id author => 2  # --> {id=>2, name=>"Pushkin A."}
+	load_by_id author => 2, "name as n"  # --> {n=>"Pushkin A."}
+	load_by_id author => 2, "id+:x as n", x => 10  # --> {n=>12}
 
 =head2 insert ($tab, %x)
 
-Добавляет запись и возвращает её id
+Adds a record and returns its id.
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->insert($tab, %x)  # -> .3
+	insert 'author', name => 'Masha'  # -> 3
 
-=head2 update ($tab, $id, %x)
+=head2 update ($tab, $id, %params)
 
-	update($tab, $id, %x)  # -> .3
+Updates a record by its id, and returns this id.
+
+	update author => 3, name => 'Sasha'  # -> 3
+	eval { update author => 4, name => 'Sasha' }; $@  # ~> Row author.id=4 is not!
 
 =head2 remove ($tab, $id)
 
-Remove row from table by it id, and returns id.
+Remove row from table by it id, and returns this id.
 
-	remove "author", 6  # -> 6
+	remove "author", 3  # -> 3
+	eval { remove author => 3 }; $@  # ~> Row author.id=4 does not exist!
 
-=head2 query_id ()
+=head2 query_id ($tab, %params)
 
-	query_id  # -> .3
+Returns the id based on other fields.
+
+	query_id 'author', name => 'Pushkin A.' # -> 2
 
 =head2 stores ($tab, $rows, %opt)
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->stores($tab, $rows, %opt)  # -> .3
+Saves data (update or insert).
 
-=head2 store ()
+	my @authors = (
+	    {id => 1, name => 'Pushkin A.S.'},
+	    {id => 2, name => 'Pushkin A.'},
+	);
+	
+	query "SELECT * FROM author ORDER BY id" # --> \@authors
+	
+	my $rows = stores 'author', [
+	    {name => 'Locatelli'},
+	    {id => 3, name => ''},
+	    {id => 2, name => 'Pushkin A.'},
+	];
+	$rows  # -> 2
+	
+	@authors = (
+	    {id => 1, name => 'Pushkin A.S.'},
+	    {id => 2, name => 'Pushkin A.'},
+	);
+	
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->store  # -> .3
+=head2 store ($tab, %params)
+
+Saves data (update or insert). But one row.
+
+	store 'author', name => 'Bishop M.' # -> 1
 
 =head2 touch ()
 
-Сверхмощная функция: возвращает pk, а если его нет - создаёт или обновляет запись и всё равно возвращает
+Super-powerful function: returns id of row, and if it doesn’t exist, creates or updates a row and still returns.
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->touch  # -> .3
+	touch name => 'Pushkin A.' # -> 2
+	touch name => 'Pushkin X.' # -> 5
 
 =head2 START_TRANSACTION ()
 
-возвращает переменную, на которой нужно установить commit, иначе происходит откат
+Returns the variable on which to set commit, otherwise the rollback occurs.
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->START_TRANSACTION  # -> .3
+	my $transaction = START_TRANSACTION;
+	
+	ref $transaction # => 123
+	
+	undef $transaction;
 
 =head2 default_dsn ()
 
@@ -751,27 +897,40 @@ Connect to base and returns connect and it identify.
 
 Connection check and reconnection.
 
-	connect_respavn($base)  # -> .3
+	ref $Aion::Query::base            # => 123
+	$Aion::Query::base_connection_id  # ~> ^\d+$
+	
+	connect_respavn $Aion::Query::base, $Aion::Query::base_connection_id  # -> .3
 
 =head2 connect_restart ($base)
 
-Рестарт коннекта
+Connection restart.
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->connect_restart($base)  # -> .3
+	my $connection_id = $Aion::Query::base_connection_id;
+	my $base = $Aion::Query::base;
+	
+	connect_restart $Aion::Query::base, $Aion::Query::base_connection_id;
+	
+	$connection_id != $Aion::Query::base_connection_id  # -> 1
+	$base->ping  # -> ""
+	$Aion::Query::base->ping  # -> 1
 
 =head2 query_stop ()
 
-возможно выполняется запрос - нужно его убить
+A request may be running - you need to kill it.
 
-	my $aion_query = Aion::Query->new;
-	$aion_query->query_stop  # -> .3
+Creates an additional connection to the base and kills the main one.
+
+	my @x = query_stop;
+	\@x  # --> []
 
 =head2 sql_debug ($fn, $query)
 
-.
+Stores queries to the database in C<@Aion::Query::DEBUG>. Called from C<query_do>.
 
-	sql_debug($fn, $query)  # -> .3
+	sql_debug label => "SELECT 123";
+	
+	$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # => label: SELECT 123"
 
 =head1 AUTHOR
 
