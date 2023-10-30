@@ -5,9 +5,11 @@ use common::sense;
 
 our $VERSION = "0.0.0-prealpha";
 
-use B;
-use DBI;
-use Scalar::Util;
+use B qw//;
+use DBI qw//;
+use Scalar::Util qw//;
+use List::Util qw//;
+use Aion::Format::Json qw//;
 
 use Exporter qw/import/;
 our @EXPORT = our @EXPORT_OK = grep {
@@ -192,19 +194,20 @@ sub quote(;$) {
 	ref $k eq "ARRAY" && ref $k->[0] eq "ARRAY"?
 		join(", ", map { join "", "(", join(", ", map quote, @$_), ")" } @$k):
 	ref $k eq "ARRAY"? join("", join(", ", map quote, @$k)):
-	ref $k eq "HASH"? join(" ", map { join " ", "WHEN", quote, "THEN", quote($k->{$_}) } sort keys %$k):
-	ref $k eq "REF" && ref $$k eq "HASH"?
-		join(", ", map { join "", $_, " = ", quote($$k->{$_}) } sort keys %$$k):
+	ref $k eq "HASH"?
+		join(", ", map { join "", $_, " = ", quote $k->{$_} } sort keys %$k):
+	ref $k eq "REF" && ref $$k eq "ARRAY"?
+		join(" ", List::Util::pairmap { join " ", "WHEN", quote $a, "THEN", quote $b } @$$k):
 	ref $k eq "SCALAR"? $$k:
-	Scalar::Util::blessed($k)? $k:
+	Scalar::Util::blessed $k ? $k:
+	ref $k ne ""? die "Something strange: `$k`":
 	$k =~ /^-?(?:0|[1-9]\d*)(\.\d+)?\z/a
 		&& ($ref = ref B::svref_2object(@_ == 0? \$_: \$_[0])
-		) ne "B::PV"? do {
-			use DDP; p my $x=[$1, $ref, $k];
+		) ne "B::PV"? (
 			!$1 && $ref eq "B::NV"? "$k.0": $k
-		}:
+		):
 	!utf8::is_utf8($k)? (
-		$k =~ /[\x80-\xFF]/a ? _to_hex_str($k): #$base->quote($k, DBI::SQL_BINARY):
+		$k =~ /[^\t\n -~]/a ? _to_hex_str($k): #$base->quote($k, DBI::SQL_BINARY):
 			_to_str($k)
 	):
 	_to_str(_recode_cp1251($k))
@@ -426,14 +429,14 @@ sub settings($;$) {
 	my ($id, $value) = @_;
 	if(@_ == 1) {
 		my $v = query_scalar("SELECT value FROM settings WHERE id=:id", id => $id);
-		return defined($v)? from_json($v): $v;
+		return defined($v)? Aion::Format::Json::from_json($v): $v;
 	}
 
 	return remove("settings" => $id) if !defined $value;
 
 	store('settings',
 		id => $id,
-		value => to_json($value),
+		value => Aion::Format::Json::to_json($value),
 	);
 }
 
@@ -577,23 +580,23 @@ sub touch(@) {
 
 # возвращает переменную, на которой нужно установить commit, иначе происходит откат
 sub START_TRANSACTION () {
-	package Aion::Transaction {
+	package Aion::Query::Transaction {
 		sub commit {
 			my ($self) = @_;
-			query::query_do("COMMIT");
+			Aion::Query::base->commit;
 			$self->{commit} = 1;
 			return $self;
 		}
 
 		sub DESTROY {
 			my ($self) = @_;
-			query::query_do("ROLLBACK") if !$self->{commit};
+			Aion::Query::base->rollback if !$self->{commit};
 		}
 	}
 
-	query::query_do("START TRANSACTION");
+	Aion::Query::base->{AutoCommit} = 0;
 
-	bless { commit => 0 }, "Aion::Transaction";
+	bless { commit => 0 }, 'Aion::Query::Transaction';
 }
 
 1;
@@ -687,8 +690,11 @@ Quoted scalar for SQL-query.
 	quote "123"     # => '123'
 	quote(0+"123")  # => 123
 	quote(123 . "") # => '123'
-	quote 123.0     # => 123.0
-	quote(0.0+"123")  # => 123.0
+	quote 123.0       # => 123.0
+	quote(0.0+"126")  # => 126
+	quote("127"+0.0)  # => 127
+	quote("128"-0.0)  # => 128
+	quote("129"+1.e-100)  # => 129.0
 	
 	# use for insert formula: SELECT :x as summ ⇒ x => \"xyz + 123"
 	quote \"without quote"  # => without quote
@@ -700,7 +706,7 @@ Quoted scalar for SQL-query.
 	quote [[1, 2], [3, "4"]]  # => (1, 2), (3, '4')
 	
 	# use in multiupdate: UPDATE author SET name=CASE id :x ELSE null END
-	quote {2=>'Pushkin A.', 1=>'Pushkin A.S.'}  # => WHEN 1 THEN 'Pushkin A.S.' WHEN 2 THEN 'Pushkin A.'
+	quote \[2=>'Pushkin A.', 1=>'Pushkin A.S.']  # => WHEN 2 THEN 'Pushkin A.' WHEN 1 THEN 'Pushkin A.S.'
 	
 	# use for UPDATE SET :x or INSERT SET :x
 	quote {name => 'A.S.', id => 12}   # => id = 12, name = 'A.S.'
@@ -798,9 +804,9 @@ To do this, it receives C<$order> of the SQL query and C<$next> - a link to the 
 	my $last = pop @rows;
 	
 	($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", $last->{next};
-	$select     # => concat(name,',',id)
+	$select     # => name || ',' || id
 	$where      # => (name < 'Pushkin A.'\nOR name = 'Pushkin A.' AND id >= '2')
-	$order_sel  # -> undef
+	$order_sel  # --> [qw/name id/]
 
 See also:
 1. Article LL<https://habr.com/ru/articles/674714/>.

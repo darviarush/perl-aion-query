@@ -88,8 +88,11 @@ done_testing; }; subtest 'quote ($scalar)' => sub {
 ::is scalar do {quote "123"}, "'123'", 'quote "123"     # => \'123\'';
 ::is scalar do {quote(0+"123")}, "123", 'quote(0+"123")  # => 123';
 ::is scalar do {quote(123 . "")}, "'123'", 'quote(123 . "") # => \'123\'';
-::is scalar do {quote 123.0}, "123.0", 'quote 123.0     # => 123.0';
-::is scalar do {quote(0.0+"123")}, "123.0", 'quote(0.0+"123")  # => 123.0';
+::is scalar do {quote 123.0}, "123.0", 'quote 123.0       # => 123.0';
+::is scalar do {quote(0.0+"126")}, "126", 'quote(0.0+"126")  # => 126';
+::is scalar do {quote("127"+0.0)}, "127", 'quote("127"+0.0)  # => 127';
+::is scalar do {quote("128"-0.0)}, "128", 'quote("128"-0.0)  # => 128';
+::is scalar do {quote("129"+1.e-100)}, "129.0", 'quote("129"+1.e-100)  # => 129.0';
 
 # use for insert formula: SELECT :x as summ ⇒ x => \"xyz + 123"
 ::is scalar do {quote \"without quote"}, "without quote", 'quote \"without quote"  # => without quote';
@@ -101,7 +104,7 @@ done_testing; }; subtest 'quote ($scalar)' => sub {
 ::is scalar do {quote [[1, 2], [3, "4"]]}, "(1, 2), (3, '4')", 'quote [[1, 2], [3, "4"]]  # => (1, 2), (3, \'4\')';
 
 # use in multiupdate: UPDATE author SET name=CASE id :x ELSE null END
-::is scalar do {quote {2=>'Pushkin A.', 1=>'Pushkin A.S.'}}, "WHEN 1 THEN 'Pushkin A.S.' WHEN 2 THEN 'Pushkin A.'", 'quote {2=>\'Pushkin A.\', 1=>\'Pushkin A.S.\'}  # => WHEN 1 THEN \'Pushkin A.S.\' WHEN 2 THEN \'Pushkin A.\'';
+::is scalar do {quote \[2=>'Pushkin A.', 1=>'Pushkin A.S.']}, "WHEN 2 THEN 'Pushkin A.' WHEN 1 THEN 'Pushkin A.S.'", 'quote \[2=>\'Pushkin A.\', 1=>\'Pushkin A.S.\']  # => WHEN 2 THEN \'Pushkin A.\' WHEN 1 THEN \'Pushkin A.S.\'';
 
 # use for UPDATE SET :x or INSERT SET :x
 ::is scalar do {quote {name => 'A.S.', id => 12}}, "id = 12, name = 'A.S.'", 'quote {name => \'A.S.\', id => 12}   # => id = 12, name = \'A.S.\'';
@@ -219,9 +222,9 @@ my @rows = query "SELECT $select as next FROM author WHERE $where LIMIT 2";
 my $last = pop @rows;
 
 ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", $last->{next};
-::is scalar do {$select}, "concat(name,',',id)", '$select     # => concat(name,\',\',id)';
+::is scalar do {$select}, "name || ',' || id", '$select     # => name || \',\' || id';
 ::is scalar do {$where}, "(name < 'Pushkin A.'\nOR name = 'Pushkin A.' AND id >= '2')", '$where      # => (name < \'Pushkin A.\'\nOR name = \'Pushkin A.\' AND id >= \'2\')';
-::is scalar do {$order_sel}, scalar do{undef}, '$order_sel  # -> undef';
+::is_deeply scalar do {$order_sel}, scalar do {[qw/name id/]}, '$order_sel  # --> [qw/name id/]';
 
 # 
 # See also:

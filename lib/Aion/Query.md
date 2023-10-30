@@ -90,7 +90,10 @@ quote "123"     # => '123'
 quote(0+"123")  # => 123
 quote(123 . "") # => '123'
 quote 123.0       # => 123.0
-quote(0.0+"123")  # => 123.0
+quote(0.0+"126")  # => 126
+quote("127"+0.0)  # => 127
+quote("128"-0.0)  # => 128
+quote("129"+1.e-100)  # => 129.0
 
 # use for insert formula: SELECT :x as summ ⇒ x => \"xyz + 123"
 quote \"without quote"  # => without quote
@@ -102,7 +105,7 @@ quote [1,2,"5"] # => 1, 2, '5'
 quote [[1, 2], [3, "4"]]  # => (1, 2), (3, '4')
 
 # use in multiupdate: UPDATE author SET name=CASE id :x ELSE null END
-quote {2=>'Pushkin A.', 1=>'Pushkin A.S.'}  # => WHEN 1 THEN 'Pushkin A.S.' WHEN 2 THEN 'Pushkin A.'
+quote \[2=>'Pushkin A.', 1=>'Pushkin A.S.']  # => WHEN 2 THEN 'Pushkin A.' WHEN 1 THEN 'Pushkin A.S.'
 
 # use for UPDATE SET :x or INSERT SET :x
 quote {name => 'A.S.', id => 12}   # => id = 12, name = 'A.S.'
@@ -220,9 +223,9 @@ my @rows = query "SELECT $select as next FROM author WHERE $where LIMIT 2";
 my $last = pop @rows;
 
 ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", $last->{next};
-$select     # => concat(name,',',id)
+$select     # => name || ',' || id
 $where      # => (name < 'Pushkin A.'\nOR name = 'Pushkin A.' AND id >= '2')
-$order_sel  # -> undef
+$order_sel  # --> [qw/name id/]
 ```
 
 See also:
