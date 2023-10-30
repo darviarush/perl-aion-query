@@ -185,19 +185,24 @@ sub _recode_cp1251 {
 sub quote(;$);
 sub quote(;$) {
 	my $k = @_ == 0? $_: $_[0];
+	my $ref;
 
 	!defined($k)? "NULL":
-	ref $k eq "ARRAY" && ref $k->[0] eq "ARRAY"? join(", ", map { join "", "(", join(", ", map { quote($_) } @$_), ")" } @$k):
-	ref $k eq "ARRAY"? join("", join(", ", map { quote($_) } @$k)):
-	ref $k eq "HASH"? join(" ", map { join " ", "WHEN", quote($_), "THEN", quote($k->{$_}) } sort keys %$k):
-	ref $k eq "REF" && ref $$k eq "HASH"? join(", ", map { join "", $_, " = ", quote($$k->{$_}) } sort keys %$$k):
+	ref $k eq "ARRAY" && ref $k->[0] eq "ARRAY"?
+		join(", ", map { join "", "(", join(", ", map quote, @$_), ")" } @$k):
+	ref $k eq "ARRAY"? join("", join(", ", map quote, @$k)):
+	ref $k eq "HASH"? join(" ", map { join " ", "WHEN", quote, "THEN", quote($k->{$_}) } sort keys %$k):
+	ref $k eq "REF" && ref $$k eq "HASH"?
+		join(", ", map { join "", $_, " = ", quote($$k->{$_}) } sort keys %$$k):
 	ref $k eq "SCALAR"? $$k:
 	Scalar::Util::blessed($k)? $k:
-	$k =~ /^-?(0|[1-9]\d*)(\.\d+)?\z/an
-		&& ref(@_ == 0
+	$k =~ /^-?(?:0|[1-9]\d*)(\.\d+)?\z/a
+		&& ($ref = ref(@_ == 0
 			? B::svref_2object(\$_)
 			: B::svref_2object(\$_[0])
-		) ne "B::PV"? $k:
+		)) ne "B::PV"? (
+			!$1 && $ref eq "B::NV"? "$k.0": $k
+		):
 	!utf8::is_utf8($k)? (
 		$k =~ /[\x80-\xFF]/a ? _to_hex_str($k): #$base->quote($k, DBI::SQL_BINARY):
 			_to_str($k)
