@@ -199,9 +199,10 @@ sub quote(;$) {
 	Scalar::Util::blessed($k)? $k:
 	$k =~ /^-?(?:0|[1-9]\d*)(\.\d+)?\z/a
 		&& ($ref = ref B::svref_2object(@_ == 0? \$_: \$_[0])
-		) ne "B::PV"? (
+		) ne "B::PV"? do {
+			use DDP; p my $x=[$1, $ref, $k];
 			!$1 && $ref eq "B::NV"? "$k.0": $k
-		):
+		}:
 	!utf8::is_utf8($k)? (
 		$k =~ /[\x80-\xFF]/a ? _to_hex_str($k): #$base->quote($k, DBI::SQL_BINARY):
 			_to_str($k)
