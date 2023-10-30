@@ -238,13 +238,14 @@ See also:
 Sets or returns a key from a table `settings`.
 
 ```perl
-query "CREATE TABLE sessings(
+query "CREATE TABLE settings(
     id TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 )";
 
-settings "x1", 10;
-settings "x1"  # -> 10
+settings "x1"       # -> undef
+settings "x1", 10   # -> 1
+settings "x1"       # -> 10
 ```
 
 ## load_by_id ($tab, $pk, $fields, @options)
@@ -262,7 +263,7 @@ load_by_id author => 2, "id+:x as n", x => 10  # --> {n=>12}
 Adds a record and returns its id.
 
 ```perl
-insert 'author', name => 'Masha'  # -> 3
+insert 'author', name => 'Masha'  # -> 4
 ```
 
 ## update ($tab, $id, %params)
@@ -271,7 +272,7 @@ Updates a record by its id, and returns this id.
 
 ```perl
 update author => 3, name => 'Sasha'  # -> 3
-eval { update author => 4, name => 'Sasha' }; $@  # ~> Row author.id=4 is not!
+eval { update author => 5, name => 'Sasha' }; $@  # ~> Row author.id=5 is not!
 ```
 
 ## remove ($tab, $id)
@@ -279,8 +280,8 @@ eval { update author => 4, name => 'Sasha' }; $@  # ~> Row author.id=4 is not!
 Remove row from table by it id, and returns this id.
 
 ```perl
-remove "author", 3  # -> 3
-eval { remove author => 3 }; $@  # ~> Row author.id=4 does not exist!
+remove "author", 4  # -> 4
+eval { remove author => 4 }; $@  # ~> Row author.id=4 does not exist!
 ```
 
 ## query_id ($tab, %params)
@@ -293,28 +294,32 @@ query_id 'author', name => 'Pushkin A.' # -> 2
 
 ## stores ($tab, $rows, %opt)
 
-Saves data (update or insert).
+Saves data (update or insert). Returns count successful operations.
 
 ```perl
 my @authors = (
     {id => 1, name => 'Pushkin A.S.'},
     {id => 2, name => 'Pushkin A.'},
+    {id => 3, name => 'Sasha'},
 );
 
 query "SELECT * FROM author ORDER BY id" # --> \@authors
 
 my $rows = stores 'author', [
     {name => 'Locatelli'},
-    {id => 3, name => ''},
+    {id => 3, name => 'Kianu R.'},
     {id => 2, name => 'Pushkin A.'},
 ];
-$rows  # -> 2
+$rows  # -> 3
 
 @authors = (
     {id => 1, name => 'Pushkin A.S.'},
     {id => 2, name => 'Pushkin A.'},
+    {id => 3, name => 'Kianu R.'},
+    {id => 4, name => 'Locatelli'},
 );
 
+query "SELECT * FROM author ORDER BY id" # --> \@authors
 ```
 
 ## store ($tab, %params)
@@ -325,13 +330,13 @@ Saves data (update or insert). But one row.
 store 'author', name => 'Bishop M.' # -> 1
 ```
 
-## touch ()
+## touch ($tab, %params)
 
 Super-powerful function: returns id of row, and if it doesn’t exist, creates or updates a row and still returns.
 
 ```perl
-touch name => 'Pushkin A.' # -> 2
-touch name => 'Pushkin X.' # -> 5
+touch 'author', name => 'Pushkin A.' # -> 2
+touch 'author', name => 'Pushkin X.' # -> 5
 ```
 
 ## START_TRANSACTION ()

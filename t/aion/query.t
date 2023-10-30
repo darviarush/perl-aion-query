@@ -237,13 +237,14 @@ my $last = pop @rows;
 # Sets or returns a key from a table `settings`.
 # 
 done_testing; }; subtest 'settings ($id, $value)' => sub { 
-query "CREATE TABLE sessings(
+query "CREATE TABLE settings(
     id TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 )";
 
-settings "x1", 10;
-::is scalar do {settings "x1"}, scalar do{10}, 'settings "x1"  # -> 10';
+::is scalar do {settings "x1"}, scalar do{undef}, 'settings "x1"       # -> undef';
+::is scalar do {settings "x1", 10}, scalar do{1}, 'settings "x1", 10   # -> 1';
+::is scalar do {settings "x1"}, scalar do{10}, 'settings "x1"       # -> 10';
 
 # 
 # ## load_by_id ($tab, $pk, $fields, @options)
@@ -261,7 +262,7 @@ done_testing; }; subtest 'load_by_id ($tab, $pk, $fields, @options)' => sub {
 # Adds a record and returns its id.
 # 
 done_testing; }; subtest 'insert ($tab, %x)' => sub { 
-::is scalar do {insert 'author', name => 'Masha'}, scalar do{3}, 'insert \'author\', name => \'Masha\'  # -> 3';
+::is scalar do {insert 'author', name => 'Masha'}, scalar do{4}, 'insert \'author\', name => \'Masha\'  # -> 4';
 
 # 
 # ## update ($tab, $id, %params)
@@ -270,7 +271,7 @@ done_testing; }; subtest 'insert ($tab, %x)' => sub {
 # 
 done_testing; }; subtest 'update ($tab, $id, %params)' => sub { 
 ::is scalar do {update author => 3, name => 'Sasha'}, scalar do{3}, 'update author => 3, name => \'Sasha\'  # -> 3';
-::like scalar do {eval { update author => 4, name => 'Sasha' }; $@}, qr!Row author.id=4 is not\!!, 'eval { update author => 4, name => \'Sasha\' }; $@  # ~> Row author.id=4 is not!';
+::like scalar do {eval { update author => 5, name => 'Sasha' }; $@}, qr!Row author.id=5 is not\!!, 'eval { update author => 5, name => \'Sasha\' }; $@  # ~> Row author.id=5 is not!';
 
 # 
 # ## remove ($tab, $id)
@@ -278,8 +279,8 @@ done_testing; }; subtest 'update ($tab, $id, %params)' => sub {
 # Remove row from table by it id, and returns this id.
 # 
 done_testing; }; subtest 'remove ($tab, $id)' => sub { 
-::is scalar do {remove "author", 3}, scalar do{3}, 'remove "author", 3  # -> 3';
-::like scalar do {eval { remove author => 3 }; $@}, qr!Row author.id=4 does not exist\!!, 'eval { remove author => 3 }; $@  # ~> Row author.id=4 does not exist!';
+::is scalar do {remove "author", 4}, scalar do{4}, 'remove "author", 4  # -> 4';
+::like scalar do {eval { remove author => 4 }; $@}, qr!Row author.id=4 does not exist\!!, 'eval { remove author => 4 }; $@  # ~> Row author.id=4 does not exist!';
 
 # 
 # ## query_id ($tab, %params)
@@ -292,28 +293,32 @@ done_testing; }; subtest 'query_id ($tab, %params)' => sub {
 # 
 # ## stores ($tab, $rows, %opt)
 # 
-# Saves data (update or insert).
+# Saves data (update or insert). Returns count successful operations.
 # 
 done_testing; }; subtest 'stores ($tab, $rows, %opt)' => sub { 
 my @authors = (
     {id => 1, name => 'Pushkin A.S.'},
     {id => 2, name => 'Pushkin A.'},
+    {id => 3, name => 'Sasha'},
 );
 
 ::is_deeply scalar do {query "SELECT * FROM author ORDER BY id"}, scalar do {\@authors}, 'query "SELECT * FROM author ORDER BY id" # --> \@authors';
 
 my $rows = stores 'author', [
     {name => 'Locatelli'},
-    {id => 3, name => ''},
+    {id => 3, name => 'Kianu R.'},
     {id => 2, name => 'Pushkin A.'},
 ];
-::is scalar do {$rows}, scalar do{2}, '$rows  # -> 2';
+::is scalar do {$rows}, scalar do{3}, '$rows  # -> 3';
 
 @authors = (
     {id => 1, name => 'Pushkin A.S.'},
     {id => 2, name => 'Pushkin A.'},
+    {id => 3, name => 'Kianu R.'},
+    {id => 4, name => 'Locatelli'},
 );
 
+::is_deeply scalar do {query "SELECT * FROM author ORDER BY id"}, scalar do {\@authors}, 'query "SELECT * FROM author ORDER BY id" # --> \@authors';
 
 # 
 # ## store ($tab, %params)
@@ -324,13 +329,13 @@ done_testing; }; subtest 'store ($tab, %params)' => sub {
 ::is scalar do {store 'author', name => 'Bishop M.'}, scalar do{1}, 'store \'author\', name => \'Bishop M.\' # -> 1';
 
 # 
-# ## touch ()
+# ## touch ($tab, %params)
 # 
 # Super-powerful function: returns id of row, and if it doesn’t exist, creates or updates a row and still returns.
 # 
-done_testing; }; subtest 'touch ()' => sub { 
-::is scalar do {touch name => 'Pushkin A.'}, scalar do{2}, 'touch name => \'Pushkin A.\' # -> 2';
-::is scalar do {touch name => 'Pushkin X.'}, scalar do{5}, 'touch name => \'Pushkin X.\' # -> 5';
+done_testing; }; subtest 'touch ($tab, %params)' => sub { 
+::is scalar do {touch 'author', name => 'Pushkin A.'}, scalar do{2}, 'touch \'author\', name => \'Pushkin A.\' # -> 2';
+::is scalar do {touch 'author', name => 'Pushkin X.'}, scalar do{5}, 'touch \'author\', name => \'Pushkin X.\' # -> 5';
 
 # 
 # ## START_TRANSACTION ()
