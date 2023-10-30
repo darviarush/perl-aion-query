@@ -7,6 +7,7 @@ our $VERSION = "0.0.0-prealpha";
 
 use B;
 use DBI;
+use Scalar::Util;
 
 use Exporter qw/import/;
 our @EXPORT = our @EXPORT_OK = grep {
@@ -197,10 +198,8 @@ sub quote(;$) {
 	ref $k eq "SCALAR"? $$k:
 	Scalar::Util::blessed($k)? $k:
 	$k =~ /^-?(?:0|[1-9]\d*)(\.\d+)?\z/a
-		&& ($ref = ref(@_ == 0
-			? B::svref_2object(\$_)
-			: B::svref_2object(\$_[0])
-		)) ne "B::PV"? (
+		&& ($ref = ref B::svref_2object(@_ == 0? \$_: \$_[0])
+		) ne "B::PV"? (
 			!$1 && $ref eq "B::NV"? "$k.0": $k
 		):
 	!utf8::is_utf8($k)? (
@@ -386,7 +385,11 @@ sub make_query_for_order(@) {
 	my @order_direct;
 	my @order_sel = map { my $x=$_; push @order_direct, $x=~s/\s+(asc|desc)\s*$//ie ? lc $1: "asc"; $x } @orders;
 
-	my $select = @order_sel==1? $order_sel[0]: join "", "concat(", join(",',',", @order_sel), ")";
+	my $select = @order_sel==1? $order_sel[0]: 
+		_check_drv($base, "mysql|mariadb")? 
+			join("", "concat(", join(",',',", @order_sel), ")"):
+			join " || ',' || ", @order_sel
+	;
 
 	return $select, 1 if $next eq "";
 
@@ -401,7 +404,7 @@ sub make_query_for_order(@) {
 	for(my $i=0; $i<@orders; $i++) {
 		my @opr;
 		for(my $j=0; $j<=$i; $j++) {
-			my $eq = $j == $#orders? "=": "";
+			#my $eq = $j == $#orders? "=": "";
 			if($j != $i) {
 				push @opr, "$order_sel[$j] = $next[$j]";
 			} elsif($j != $#orders) {
@@ -677,14 +680,32 @@ Returns last insert id.
 
 Quoted scalar for SQL-query.
 
+	quote undef     # => NULL
 	quote "abc"     # => 'abc'
 	quote 123       # => 123
 	quote "123"     # => '123'
+	quote(0+"123")  # => 123
+	quote(123 . "") # => '123'
+	quote 123.0     # => 123.0
+	quote(0.0+"123")  # => 123.0
+	
+	# use for insert formula: SELECT :x as summ ⇒ x => \"xyz + 123"
+	quote \"without quote"  # => without quote
+	
+	# use in: WHERE id in (:x)
 	quote [1,2,"5"] # => 1, 2, '5'
+	
+	# use in: INSERT INTO author VALUES :x
+	quote [[1, 2], [3, "4"]]  # => (1, 2), (3, '4')
+	
+	# use in multiupdate: UPDATE author SET name=CASE id :x ELSE null END
+	quote {2=>'Pushkin A.', 1=>'Pushkin A.S.'}  # => WHEN 1 THEN 'Pushkin A.S.' WHEN 2 THEN 'Pushkin A.'
+	
+	# use for UPDATE SET :x or INSERT SET :x
+	quote {name => 'A.S.', id => 12}   # => id = 12, name = 'A.S.'
 	
 	[map quote, -6, "-6", 1.5, "1.5"] # --> [-6, "'-6'", 1.5, "'1.5'"]
 	
-	quote \"without quote"  # => without quote
 
 =head2 query_prepare ($query, %param)
 
@@ -740,8 +761,9 @@ Returns one row.
 
 	query_row "SELECT name FROM author WHERE id=2" # --> {name => "Pushkin A."}
 	
-	my @row = query_row "SELECT id, name FROM author WHERE id=2";
-	\@row # --> [2, "Pushkin A."]
+	my ($id, $name) = query_row "SELECT id, name FROM author WHERE id=2";
+	$id    # -> 2
+	$name  # => Pushkin A.
 
 =head2 query_row_ref ($query, %params)
 
@@ -760,13 +782,13 @@ Returns scalar.
 
 =head2 make_query_for_order ($order, $next)
 
-Creates a condition for requesting a page not by offset, but by cursor pagination.
+Creates a condition for requesting a page not by offset, but by B<cursor pagination>.
 
 To do this, it receives C<$order> of the SQL query and C<$next> - a link to the next page.
 
 	my ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", undef;
 	
-	$select     # => concat(name,',',id)
+	$select     # => name || ',' || id
 	$where      # -> 1
 	$order_sel  # -> undef
 	
@@ -776,10 +798,12 @@ To do this, it receives C<$order> of the SQL query and C<$next> - a link to the 
 	
 	($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", $last->{next};
 	$select     # => concat(name,',',id)
-	$where      # -> 1
+	$where      # => (name < 'Pushkin A.'\nOR name = 'Pushkin A.' AND id >= '2')
 	$order_sel  # -> undef
 
-See article LL<https://habr.com/ru/articles/674714/>.
+See also:
+1. Article LL<https://habr.com/ru/articles/674714/>.
+2. LL<https://metacpan.org/dist/SQL-SimpleOps/view/lib/SQL/SimpleOps.pod#SelectCursor>
 
 =head2 settings ($id, $value)
 

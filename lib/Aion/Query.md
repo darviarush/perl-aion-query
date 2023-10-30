@@ -83,14 +83,32 @@ query "INSERT INTO author (name) VALUES (:name)", name => "Alice"  # -> 1
 Quoted scalar for SQL-query.
 
 ```perl
+quote undef     # => NULL
 quote "abc"     # => 'abc'
 quote 123       # => 123
 quote "123"     # => '123'
+quote(0+"123")  # => 123
+quote(123 . "") # => '123'
+quote 123.0       # => 123.0
+quote(0.0+"123")  # => 123.0
+
+# use for insert formula: SELECT :x as summ ⇒ x => \"xyz + 123"
+quote \"without quote"  # => without quote
+
+# use in: WHERE id in (:x)
 quote [1,2,"5"] # => 1, 2, '5'
+
+# use in: INSERT INTO author VALUES :x
+quote [[1, 2], [3, "4"]]  # => (1, 2), (3, '4')
+
+# use in multiupdate: UPDATE author SET name=CASE id :x ELSE null END
+quote {2=>'Pushkin A.', 1=>'Pushkin A.S.'}  # => WHEN 1 THEN 'Pushkin A.S.' WHEN 2 THEN 'Pushkin A.'
+
+# use for UPDATE SET :x or INSERT SET :x
+quote {name => 'A.S.', id => 12}   # => id = 12, name = 'A.S.'
 
 [map quote, -6, "-6", 1.5, "1.5"] # --> [-6, "'-6'", 1.5, "'1.5'"]
 
-quote \"without quote"  # => without quote
 ```
 
 ## query_prepare ($query, %param)
@@ -193,7 +211,7 @@ To do this, it receives `$order` of the SQL query and `$next` - a link to the ne
 ```perl
 my ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", undef;
 
-$select     # => concat(name,',',id)
+$select     # => name || ',' || id
 $where      # -> 1
 $order_sel  # -> undef
 
@@ -203,7 +221,7 @@ my $last = pop @rows;
 
 ($select, $where, $order_sel) = make_query_for_order "name DESC, id ASC", $last->{next};
 $select     # => concat(name,',',id)
-$where      # -> 1
+$where      # => (name < 'Pushkin A.'\nOR name = 'Pushkin A.' AND id >= '2')
 $order_sel  # -> undef
 ```
 
