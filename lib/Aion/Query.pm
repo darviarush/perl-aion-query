@@ -5,6 +5,8 @@ use common::sense;
 
 our $VERSION = "0.0.0-prealpha";
 
+use Aion::Format qw//;
+use Aion::Format::Json qw//;
 use B qw//;
 use DBI qw//;
 use Scalar::Util qw//;
@@ -213,15 +215,22 @@ sub query_prepare (@) {
 	$query
 }
 
-sub query_do($) {
-	my ($query) = @_;
+sub query_do($;$) {
+	my ($query, $columns) = @_;
 	sql_debug query => $query;
 	connect_respavn($base, $base_connection_id);
 
 	my $res = eval {
 		if($query =~ /^\s*(select|show|desc(ribe)?)\b/in) {
 
-			my $r = $base->selectall_arrayref($query, { Slice => {} });
+			my $r = @_>1? do {
+				my $sth = $base->prepare($query);
+				$sth->execute;
+				$_[1] = [@{$sth->{NAME}}];
+				my $res = $sth->fetchall_arrayref({});
+				$sth->finish;
+				$res
+			}: $base->selectall_arrayref($query, { Slice => {} });
 
 			if(defined $r and BQ) {
 				for my $row (@$r) {
@@ -350,8 +359,12 @@ sub query_row_ref(@) {
 #   ($id, $word) = query_row_ref "SELECT id, word FROM word WHERE word = 1"
 #
 sub query_row(@) {
-	my $row = query_row_ref(@_);
-	return wantarray? values(%$row): $row
+	return query_row_ref(@_) unless wantarray;
+	my $sql = query_prepare(@_);
+	my $rows  = query_do($sql, my $columns);
+	die "A few lines!" if @$rows > 1;
+	my $row = $rows->[0];
+	map $row->{$_}, @$columns
 }
 
 # Выбрать значение
@@ -447,7 +460,7 @@ sub _check_drv {
 sub insert(@) {
 	my ($tab, %x) = @_;
 	if(_check_drv($base, "mysql|mariadb")) {
-		query "INSERT INTO $tab SET :set", set => \\%x;
+		query "INSERT INTO $tab SET :set", set => \%x;
 	} else {
 		stores($tab, [\%x], insert => 1);
 	}
@@ -460,7 +473,7 @@ sub insert(@) {
 #
 sub update(@) {
 	my ($tab, $id, %x) = @_;
-	die "Row $tab.id=$id is not!" if !query "UPDATE $tab SET :set WHERE id=:id", id=>$id, set => \\%x;
+	die "Row $tab.id=$id is not!" if !query "UPDATE $tab SET :set WHERE id=:id", id=>$id, set => \%x;
 	$id
 }
 
@@ -806,13 +819,14 @@ See also:
 
 Sets or returns a key from a table C<settings>.
 
-	query "CREATE TABLE sessings(
+	query "CREATE TABLE settings(
 	    id TEXT PRIMARY KEY,
 		value TEXT NOT NULL
 	)";
 	
-	settings "x1", 10;
-	settings "x1"  # -> 10
+	settings "x1"       # -> undef
+	settings "x1", 10   # -> 1
+	settings "x1"       # -> 10
 
 =head2 load_by_id ($tab, $pk, $fields, @options)
 
@@ -826,21 +840,21 @@ Returns the entry by its id.
 
 Adds a record and returns its id.
 
-	insert 'author', name => 'Masha'  # -> 3
+	insert 'author', name => 'Masha'  # -> 4
 
 =head2 update ($tab, $id, %params)
 
 Updates a record by its id, and returns this id.
 
 	update author => 3, name => 'Sasha'  # -> 3
-	eval { update author => 4, name => 'Sasha' }; $@  # ~> Row author.id=4 is not!
+	eval { update author => 5, name => 'Sasha' }; $@  # ~> Row author.id=5 is not!
 
 =head2 remove ($tab, $id)
 
 Remove row from table by it id, and returns this id.
 
-	remove "author", 3  # -> 3
-	eval { remove author => 3 }; $@  # ~> Row author.id=4 does not exist!
+	remove "author", 4  # -> 4
+	eval { remove author => 4 }; $@  # ~> Row author.id=4 does not exist!
 
 =head2 query_id ($tab, %params)
 
@@ -850,27 +864,31 @@ Returns the id based on other fields.
 
 =head2 stores ($tab, $rows, %opt)
 
-Saves data (update or insert).
+Saves data (update or insert). Returns count successful operations.
 
 	my @authors = (
 	    {id => 1, name => 'Pushkin A.S.'},
 	    {id => 2, name => 'Pushkin A.'},
+	    {id => 3, name => 'Sasha'},
 	);
 	
 	query "SELECT * FROM author ORDER BY id" # --> \@authors
 	
 	my $rows = stores 'author', [
 	    {name => 'Locatelli'},
-	    {id => 3, name => ''},
+	    {id => 3, name => 'Kianu R.'},
 	    {id => 2, name => 'Pushkin A.'},
 	];
-	$rows  # -> 2
+	$rows  # -> 3
 	
 	@authors = (
 	    {id => 1, name => 'Pushkin A.S.'},
 	    {id => 2, name => 'Pushkin A.'},
+	    {id => 3, name => 'Kianu R.'},
+	    {id => 4, name => 'Locatelli'},
 	);
 	
+	query "SELECT * FROM author ORDER BY id" # --> \@authors
 
 =head2 store ($tab, %params)
 
@@ -878,12 +896,12 @@ Saves data (update or insert). But one row.
 
 	store 'author', name => 'Bishop M.' # -> 1
 
-=head2 touch ()
+=head2 touch ($tab, %params)
 
 Super-powerful function: returns id of row, and if it doesn’t exist, creates or updates a row and still returns.
 
-	touch name => 'Pushkin A.' # -> 2
-	touch name => 'Pushkin X.' # -> 5
+	touch 'author', name => 'Pushkin A.' # -> 2
+	touch 'author', name => 'Pushkin X.' # -> 5
 
 =head2 START_TRANSACTION ()
 
