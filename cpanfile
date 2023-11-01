@@ -12,6 +12,6 @@ on 'test' => sub {
 
 requires 'config', '1.3';
 requires 'common::sense', '0';
-requires 'DBD::Sqlite', '1.74';
+requires 'DBD::SQLite', '1.74';
 
 requires 'Aion::Format', '0.0.2';
