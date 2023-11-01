@@ -8,10 +8,10 @@ on 'develop' => sub {
 
 on 'test' => sub {
 	requires 'Test::More', '0.98';
-	requires 'DBD::Mock', '1.59';
 };
 
 requires 'config', '1.3';
 requires 'common::sense', '0';
+requires 'DBD::Sqlite', '1.74';
 
-requires 'Aion::Format';
+requires 'Aion::Format', '0.0.2';
