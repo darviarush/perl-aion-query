@@ -1,11 +1,10 @@
-[![Actions Status](https://github.com/darviarush/perl-aion-query/actions/workflows/test.yml/badge.svg)](https://github.com/darviarush/perl-aion-query/actions)
 # NAME
 
 Aion::Query - functional interface for accessing database mysql and mariadb
 
 # VERSION
 
-0.0.1
+0.0.2
 
 # SYNOPSIS
 

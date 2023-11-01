@@ -3,7 +3,7 @@ use 5.22.0;
 no strict; no warnings; no diagnostics;
 use common::sense;
 
-our $VERSION = "0.0.1";
+our $VERSION = "0.0.2";
 
 use Aion::Format qw//;
 use Aion::Format::Json qw//;
@@ -617,7 +617,7 @@ Aion::Query - functional interface for accessing database mysql and mariadb
 
 =head1 VERSION
 
-0.0.1
+0.0.2
 
 =head1 SYNOPSIS
 
