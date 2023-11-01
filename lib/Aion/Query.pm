@@ -3,7 +3,7 @@ use 5.22.0;
 no strict; no warnings; no diagnostics;
 use common::sense;
 
-our $VERSION = "0.0.0-prealpha";
+our $VERSION = "0.0.1";
 
 use Aion::Format qw//;
 use Aion::Format::Json qw//;
@@ -111,6 +111,7 @@ END {
 
 # возможно выполняется запрос - нужно его убить
 sub query_stop {
+	return if $base_connection_id == -1;
 	# вспомогательное подключение
 	my $signal = base_connect(default_connect_options());
 	$signal->do("KILL HARD " . ($base_connection_id + 0));
@@ -516,7 +517,9 @@ sub stores(@) {
 	my ($ignore, $insert) = delete @opt{qw/ignore insert/};
 	die "Keys ${\ join('', )}" if keys %opt;
 
-	my @keys = sort keys %{$rows->[0]};
+
+
+	my @keys = sort keys %{+{map %$_, @$rows}};
 	die "No fields in bean $tab!" if !@keys;
 
 	my $fields = join ", ", @keys;
@@ -586,20 +589,20 @@ sub START_TRANSACTION () {
 	package Aion::Query::Transaction {
 		sub commit {
 			my ($self) = @_;
-			Aion::Query::base->commit;
+			$Aion::Query::base->commit;
 			$self->{commit} = 1;
 			return $self;
 		}
 
 		sub DESTROY {
 			my ($self) = @_;
-			Aion::Query::base->rollback if !$self->{commit};
+			$Aion::Query::base->rollback unless $self->{commit};
 		}
 	}
 
-	Aion::Query::base->{AutoCommit} = 0;
+	$Aion::Query::base->begin_work;
 
-	bless { commit => 0 }, 'Aion::Query::Transaction';
+	bless {}, 'Aion::Query::Transaction';
 }
 
 1;
@@ -614,7 +617,7 @@ Aion::Query - functional interface for accessing database mysql and mariadb
 
 =head1 VERSION
 
-0.0.0-prealpha
+0.0.1
 
 =head1 SYNOPSIS
 
@@ -881,11 +884,18 @@ Saves data (update or insert). Returns count successful operations.
 	];
 	$rows  # -> 3
 	
+	my $sql = "query: INSERT INTO author (id, name) VALUES (NULL, 'Locatelli'),
+	(3, 'Kianu R.'),
+	(2, 'Pushkin A.') ON CONFLICT DO UPDATE SET id = excluded.id, name = excluded.name";
+	
+	$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # -> $sql
+	
+	
 	@authors = (
 	    {id => 1, name => 'Pushkin A.S.'},
 	    {id => 2, name => 'Pushkin A.'},
 	    {id => 3, name => 'Kianu R.'},
-	    {id => 4, name => 'Locatelli'},
+	    {id => 5, name => 'Locatelli'},
 	);
 	
 	query "SELECT * FROM author ORDER BY id" # --> \@authors
@@ -901,7 +911,7 @@ Saves data (update or insert). But one row.
 Super-powerful function: returns id of row, and if it doesn’t exist, creates or updates a row and still returns.
 
 	touch 'author', name => 'Pushkin A.' # -> 2
-	touch 'author', name => 'Pushkin X.' # -> 5
+	touch 'author', name => 'Pushkin X.' # -> 7
 
 =head2 START_TRANSACTION ()
 
@@ -909,42 +919,55 @@ Returns the variable on which to set commit, otherwise the rollback occurs.
 
 	my $transaction = START_TRANSACTION;
 	
-	ref $transaction # => 123
+	query "UPDATE author SET name='Pushkin N.' where id=7"  # -> 1
 	
-	undef $transaction;
+	$transaction->commit;
+	
+	query_scalar "SELECT name FROM author where id=7"  # => Pushkin N.
+	
+	
+	eval {
+	    my $transaction = START_TRANSACTION;
+	
+	    query "UPDATE author SET name='Pushkin X.' where id=7" # -> 1
+	
+	    die "!";  # rollback
+	    $transaction->commit;
+	};
+	
+	query_scalar "SELECT name FROM author where id=7"  # => Pushkin N.
 
 =head2 default_dsn ()
 
 Default DSN for C<< DBI-E<gt>connect >>.
 
-	default_dsn  # => 123
+	default_dsn  # => DBI:SQLite:dbname=test-base.sqlite
 
 =head2 default_connect_options ()
 
 DSN, USER, PASSWORD and commands after connect.
 
-	[default_connect_options]  # --> []
+	[default_connect_options]  # --> ['DBI:SQLite:dbname=test-base.sqlite', 'root', 123, []]
 
 =head2 base_connect ($dsn, $user, $password, $conn)
 
 Connect to base and returns connect and it identify.
 
-	my ($dbh, $connect_id) = base_connect("", "toor", "toorpasswd", [
-	    "SET NAMES utf8",
-	    "SET sql_mode='NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'",
-	]);
+	my ($dbh, $connect_id) = base_connect("DBI:SQLite:dbname=base-2.sqlite", "toor", "toorpasswd", []);
 	
-	ref $dbh     # => 123
-	$connect_id  # -> 123
+	ref $dbh     # => DBI::db
+	$connect_id  # -> -1
 
 =head2 connect_respavn ($base)
 
 Connection check and reconnection.
 
-	ref $Aion::Query::base            # => 123
-	$Aion::Query::base_connection_id  # ~> ^\d+$
+	my $old_base = $Aion::Query::base;
 	
-	connect_respavn $Aion::Query::base, $Aion::Query::base_connection_id  # -> .3
+	$old_base->ping  # -> 1
+	connect_respavn $Aion::Query::base, $Aion::Query::base_connection_id;
+	
+	$old_base  # -> $Aion::Query::base
 
 =head2 connect_restart ($base)
 
@@ -955,8 +978,7 @@ Connection restart.
 	
 	connect_restart $Aion::Query::base, $Aion::Query::base_connection_id;
 	
-	$connection_id != $Aion::Query::base_connection_id  # -> 1
-	$base->ping  # -> ""
+	$base->ping  # -> 0
 	$Aion::Query::base->ping  # -> 1
 
 =head2 query_stop ()
@@ -964,6 +986,10 @@ Connection restart.
 A request may be running - you need to kill it.
 
 Creates an additional connection to the base and kills the main one.
+
+It using C<$Aion::Query::base_connection_id> for this.
+
+SQLite runs in the same process, so C<$Aion::Query::base_connection_id> has C<-1>. In this case, this method does nothing.
 
 	my @x = query_stop;
 	\@x  # --> []
@@ -974,7 +1000,7 @@ Stores queries to the database in C<@Aion::Query::DEBUG>. Called from C<query_do
 
 	sql_debug label => "SELECT 123";
 	
-	$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # => label: SELECT 123"
+	$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # => label: SELECT 123
 
 =head1 AUTHOR
 

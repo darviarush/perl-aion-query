@@ -4,7 +4,7 @@ Aion::Query - functional interface for accessing database mysql and mariadb
 
 # VERSION
 
-0.0.0-prealpha
+0.0.1
 
 # SYNOPSIS
 
@@ -312,11 +312,18 @@ my $rows = stores 'author', [
 ];
 $rows  # -> 3
 
+my $sql = "query: INSERT INTO author (id, name) VALUES (NULL, 'Locatelli'),
+(3, 'Kianu R.'),
+(2, 'Pushkin A.') ON CONFLICT DO UPDATE SET id = excluded.id, name = excluded.name";
+
+$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # -> $sql
+
+
 @authors = (
     {id => 1, name => 'Pushkin A.S.'},
     {id => 2, name => 'Pushkin A.'},
     {id => 3, name => 'Kianu R.'},
-    {id => 4, name => 'Locatelli'},
+    {id => 5, name => 'Locatelli'},
 );
 
 query "SELECT * FROM author ORDER BY id" # --> \@authors
@@ -336,7 +343,7 @@ Super-powerful function: returns id of row, and if it doesn’t exist, creates o
 
 ```perl
 touch 'author', name => 'Pushkin A.' # -> 2
-touch 'author', name => 'Pushkin X.' # -> 5
+touch 'author', name => 'Pushkin X.' # -> 7
 ```
 
 ## START_TRANSACTION ()
@@ -346,9 +353,23 @@ Returns the variable on which to set commit, otherwise the rollback occurs.
 ```perl
 my $transaction = START_TRANSACTION;
 
-ref $transaction # => 123
+query "UPDATE author SET name='Pushkin N.' where id=7"  # -> 1
 
-undef $transaction;
+$transaction->commit;
+
+query_scalar "SELECT name FROM author where id=7"  # => Pushkin N.
+
+
+eval {
+    my $transaction = START_TRANSACTION;
+
+    query "UPDATE author SET name='Pushkin X.' where id=7" # -> 1
+
+    die "!";  # rollback
+    $transaction->commit;
+};
+
+query_scalar "SELECT name FROM author where id=7"  # => Pushkin N.
 ```
 
 ## default_dsn ()
@@ -356,7 +377,7 @@ undef $transaction;
 Default DSN for `DBI->connect`.
 
 ```perl
-default_dsn  # => 123
+default_dsn  # => DBI:SQLite:dbname=test-base.sqlite
 ```
 
 ## default_connect_options ()
@@ -364,7 +385,7 @@ default_dsn  # => 123
 DSN, USER, PASSWORD and commands after connect.
 
 ```perl
-[default_connect_options]  # --> []
+[default_connect_options]  # --> ['DBI:SQLite:dbname=test-base.sqlite', 'root', 123, []]
 ```
 
 ## base_connect ($dsn, $user, $password, $conn)
@@ -372,13 +393,10 @@ DSN, USER, PASSWORD and commands after connect.
 Connect to base and returns connect and it identify.
 
 ```perl
-my ($dbh, $connect_id) = base_connect("", "toor", "toorpasswd", [
-    "SET NAMES utf8",
-    "SET sql_mode='NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'",
-]);
+my ($dbh, $connect_id) = base_connect("DBI:SQLite:dbname=base-2.sqlite", "toor", "toorpasswd", []);
 
-ref $dbh     # => 123
-$connect_id  # -> 123
+ref $dbh     # => DBI::db
+$connect_id  # -> -1
 ```
 
 ## connect_respavn ($base)
@@ -386,10 +404,12 @@ $connect_id  # -> 123
 Connection check and reconnection.
 
 ```perl
-ref $Aion::Query::base            # => 123
-$Aion::Query::base_connection_id  # ~> ^\d+$
+my $old_base = $Aion::Query::base;
 
-connect_respavn $Aion::Query::base, $Aion::Query::base_connection_id  # -> .3
+$old_base->ping  # -> 1
+connect_respavn $Aion::Query::base, $Aion::Query::base_connection_id;
+
+$old_base  # -> $Aion::Query::base
 ```
 
 ## connect_restart ($base)
@@ -402,8 +422,7 @@ my $base = $Aion::Query::base;
 
 connect_restart $Aion::Query::base, $Aion::Query::base_connection_id;
 
-$connection_id != $Aion::Query::base_connection_id  # -> 1
-$base->ping  # -> ""
+$base->ping  # -> 0
 $Aion::Query::base->ping  # -> 1
 ```
 
@@ -412,6 +431,10 @@ $Aion::Query::base->ping  # -> 1
 A request may be running - you need to kill it.
 
 Creates an additional connection to the base and kills the main one.
+
+It using `$Aion::Query::base_connection_id` for this.
+
+SQLite runs in the same process, so `$Aion::Query::base_connection_id` has `-1`. In this case, this method does nothing.
 
 ```perl
 my @x = query_stop;
@@ -425,7 +448,7 @@ Stores queries to the database in `@Aion::Query::DEBUG`. Called from `query_do`.
 ```perl
 sql_debug label => "SELECT 123";
 
-$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # => label: SELECT 123"
+$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # => label: SELECT 123
 ```
 
 # AUTHOR

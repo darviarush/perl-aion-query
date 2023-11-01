@@ -4,7 +4,7 @@ use common::sense; use open qw/:std :utf8/; use Test::More 0.98; sub _mkpath_ { 
 # 
 # # VERSION
 # 
-# 0.0.0-prealpha
+# 0.0.1
 # 
 # # SYNOPSIS
 # 
@@ -311,11 +311,18 @@ my $rows = stores 'author', [
 ];
 ::is scalar do {$rows}, scalar do{3}, '$rows  # -> 3';
 
+my $sql = "query: INSERT INTO author (id, name) VALUES (NULL, 'Locatelli'),
+(3, 'Kianu R.'),
+(2, 'Pushkin A.') ON CONFLICT DO UPDATE SET id = excluded.id, name = excluded.name";
+
+::is scalar do {$Aion::Query::DEBUG[$#Aion::Query::DEBUG]}, scalar do{$sql}, '$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # -> $sql';
+
+
 @authors = (
     {id => 1, name => 'Pushkin A.S.'},
     {id => 2, name => 'Pushkin A.'},
     {id => 3, name => 'Kianu R.'},
-    {id => 4, name => 'Locatelli'},
+    {id => 5, name => 'Locatelli'},
 );
 
 ::is_deeply scalar do {query "SELECT * FROM author ORDER BY id"}, scalar do {\@authors}, 'query "SELECT * FROM author ORDER BY id" # --> \@authors';
@@ -335,7 +342,7 @@ done_testing; }; subtest 'store ($tab, %params)' => sub {
 # 
 done_testing; }; subtest 'touch ($tab, %params)' => sub { 
 ::is scalar do {touch 'author', name => 'Pushkin A.'}, scalar do{2}, 'touch \'author\', name => \'Pushkin A.\' # -> 2';
-::is scalar do {touch 'author', name => 'Pushkin X.'}, scalar do{5}, 'touch \'author\', name => \'Pushkin X.\' # -> 5';
+::is scalar do {touch 'author', name => 'Pushkin X.'}, scalar do{7}, 'touch \'author\', name => \'Pushkin X.\' # -> 7';
 
 # 
 # ## START_TRANSACTION ()
@@ -345,9 +352,23 @@ done_testing; }; subtest 'touch ($tab, %params)' => sub {
 done_testing; }; subtest 'START_TRANSACTION ()' => sub { 
 my $transaction = START_TRANSACTION;
 
-::is scalar do {ref $transaction}, "123", 'ref $transaction # => 123';
+::is scalar do {query "UPDATE author SET name='Pushkin N.' where id=7"}, scalar do{1}, 'query "UPDATE author SET name=\'Pushkin N.\' where id=7"  # -> 1';
 
-undef $transaction;
+$transaction->commit;
+
+::is scalar do {query_scalar "SELECT name FROM author where id=7"}, "Pushkin N.", 'query_scalar "SELECT name FROM author where id=7"  # => Pushkin N.';
+
+
+eval {
+    my $transaction = START_TRANSACTION;
+
+::is scalar do {query "UPDATE author SET name='Pushkin X.' where id=7"}, scalar do{1}, '    query "UPDATE author SET name=\'Pushkin X.\' where id=7" # -> 1';
+
+    die "!";  # rollback
+    $transaction->commit;
+};
+
+::is scalar do {query_scalar "SELECT name FROM author where id=7"}, "Pushkin N.", 'query_scalar "SELECT name FROM author where id=7"  # => Pushkin N.';
 
 # 
 # ## default_dsn ()
@@ -355,7 +376,7 @@ undef $transaction;
 # Default DSN for `DBI->connect`.
 # 
 done_testing; }; subtest 'default_dsn ()' => sub { 
-::is scalar do {default_dsn}, "123", 'default_dsn  # => 123';
+::is scalar do {default_dsn}, "DBI:SQLite:dbname=test-base.sqlite", 'default_dsn  # => DBI:SQLite:dbname=test-base.sqlite';
 
 # 
 # ## default_connect_options ()
@@ -363,7 +384,7 @@ done_testing; }; subtest 'default_dsn ()' => sub {
 # DSN, USER, PASSWORD and commands after connect.
 # 
 done_testing; }; subtest 'default_connect_options ()' => sub { 
-::is_deeply scalar do {[default_connect_options]}, scalar do {[]}, '[default_connect_options]  # --> []';
+::is_deeply scalar do {[default_connect_options]}, scalar do {['DBI:SQLite:dbname=test-base.sqlite', 'root', 123, []]}, '[default_connect_options]  # --> [\'DBI:SQLite:dbname=test-base.sqlite\', \'root\', 123, []]';
 
 # 
 # ## base_connect ($dsn, $user, $password, $conn)
@@ -371,13 +392,10 @@ done_testing; }; subtest 'default_connect_options ()' => sub {
 # Connect to base and returns connect and it identify.
 # 
 done_testing; }; subtest 'base_connect ($dsn, $user, $password, $conn)' => sub { 
-my ($dbh, $connect_id) = base_connect("", "toor", "toorpasswd", [
-    "SET NAMES utf8",
-    "SET sql_mode='NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'",
-]);
+my ($dbh, $connect_id) = base_connect("DBI:SQLite:dbname=base-2.sqlite", "toor", "toorpasswd", []);
 
-::is scalar do {ref $dbh}, "123", 'ref $dbh     # => 123';
-::is scalar do {$connect_id}, scalar do{123}, '$connect_id  # -> 123';
+::is scalar do {ref $dbh}, "DBI::db", 'ref $dbh     # => DBI::db';
+::is scalar do {$connect_id}, scalar do{-1}, '$connect_id  # -> -1';
 
 # 
 # ## connect_respavn ($base)
@@ -385,10 +403,12 @@ my ($dbh, $connect_id) = base_connect("", "toor", "toorpasswd", [
 # Connection check and reconnection.
 # 
 done_testing; }; subtest 'connect_respavn ($base)' => sub { 
-::is scalar do {ref $Aion::Query::base}, "123", 'ref $Aion::Query::base            # => 123';
-::like scalar do {$Aion::Query::base_connection_id}, qr!^\d+$!, '$Aion::Query::base_connection_id  # ~> ^\d+$';
+my $old_base = $Aion::Query::base;
 
-::is scalar do {connect_respavn $Aion::Query::base, $Aion::Query::base_connection_id}, scalar do{.3}, 'connect_respavn $Aion::Query::base, $Aion::Query::base_connection_id  # -> .3';
+::is scalar do {$old_base->ping}, scalar do{1}, '$old_base->ping  # -> 1';
+connect_respavn $Aion::Query::base, $Aion::Query::base_connection_id;
+
+::is scalar do {$old_base}, scalar do{$Aion::Query::base}, '$old_base  # -> $Aion::Query::base';
 
 # 
 # ## connect_restart ($base)
@@ -401,8 +421,7 @@ my $base = $Aion::Query::base;
 
 connect_restart $Aion::Query::base, $Aion::Query::base_connection_id;
 
-::is scalar do {$connection_id != $Aion::Query::base_connection_id}, scalar do{1}, '$connection_id != $Aion::Query::base_connection_id  # -> 1';
-::is scalar do {$base->ping}, scalar do{""}, '$base->ping  # -> ""';
+::is scalar do {$base->ping}, scalar do{0}, '$base->ping  # -> 0';
 ::is scalar do {$Aion::Query::base->ping}, scalar do{1}, '$Aion::Query::base->ping  # -> 1';
 
 # 
@@ -411,6 +430,10 @@ connect_restart $Aion::Query::base, $Aion::Query::base_connection_id;
 # A request may be running - you need to kill it.
 # 
 # Creates an additional connection to the base and kills the main one.
+# 
+# It using `$Aion::Query::base_connection_id` for this.
+# 
+# SQLite runs in the same process, so `$Aion::Query::base_connection_id` has `-1`. In this case, this method does nothing.
 # 
 done_testing; }; subtest 'query_stop ()' => sub { 
 my @x = query_stop;
@@ -424,7 +447,7 @@ my @x = query_stop;
 done_testing; }; subtest 'sql_debug ($fn, $query)' => sub { 
 sql_debug label => "SELECT 123";
 
-::is scalar do {$Aion::Query::DEBUG[$#Aion::Query::DEBUG]}, "label: SELECT 123\"", '$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # => label: SELECT 123"';
+::is scalar do {$Aion::Query::DEBUG[$#Aion::Query::DEBUG]}, "label: SELECT 123", '$Aion::Query::DEBUG[$#Aion::Query::DEBUG]  # => label: SELECT 123';
 
 # 
 # # AUTHOR
