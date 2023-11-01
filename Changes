@@ -2,6 +2,10 @@ Revision history for Perl extension Aion::Query
 
 {{$NEXT}}
 
+0.0.2 2023-11-01T10:55:12Z
+
+    - fix dependency
+
 0.0.1 2023-11-01T09:11:21Z
 
     - tested sqlite engine
