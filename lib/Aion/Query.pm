@@ -3,7 +3,7 @@ use 5.22.0;
 no strict; no warnings; no diagnostics;
 use common::sense;
 
-our $VERSION = "0.0.2";
+our $VERSION = "0.0.3";
 
 use Aion::Format qw//;
 use Aion::Format::Json qw//;
@@ -149,14 +149,6 @@ sub LAST_INSERT_ID() {
 	$base->last_insert_id
 }
 
-# Преобразует в строку
-sub _to_str($) {
-	local($_) = @_;
-	s/[\\']/\\$&/g;
-	s/^(.*)\z/'$1'/s;
-	$_
-}
-
 # Преобразует в бинарную строку принятую в MYSQL
 sub _to_hex_str($) {
 	my ($s) = @_;
@@ -201,9 +193,9 @@ sub quote(;$) {
 		):
 	!utf8::is_utf8($k)? (
 		$k =~ /[^\t\n -~]/a ? _to_hex_str($k): #$base->quote($k, DBI::SQL_BINARY):
-			_to_str($k)
+			Aion::Format::to_str($k)
 	):
-	_to_str(_recode_cp1251($k))
+	Aion::Format::to_str(_recode_cp1251($k))
 }
 
 sub query_prepare (@) {
@@ -617,7 +609,7 @@ Aion::Query - functional interface for accessing database mysql and mariadb
 
 =head1 VERSION
 
-0.0.2
+0.0.3
 
 =head1 SYNOPSIS
 

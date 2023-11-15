@@ -4,7 +4,7 @@ Aion::Query - functional interface for accessing database mysql and mariadb
 
 # VERSION
 
-0.0.2
+0.0.3
 
 # SYNOPSIS
 
