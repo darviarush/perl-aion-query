@@ -1,3 +1,4 @@
+[![Actions Status](https://github.com/darviarush/perl-aion-query/actions/workflows/test.yml/badge.svg)](https://github.com/darviarush/perl-aion-query/actions) [![MetaCPAN Release](https://badge.fury.io/pl/Aion-Query.svg)](https://metacpan.org/release/Aion-Query)
 # NAME
 
 Aion::Query - functional interface for accessing database mysql and mariadb

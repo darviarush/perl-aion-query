@@ -200,23 +200,23 @@ sub quote(;$) {
 
 sub _set_type {
 	my ($type, $x) = @_;
-	if(ref $type eq "ARRAY") {
-		_set_type($type, $_) for @$x;
+	if(ref $x eq "ARRAY") {
+		[map _set_type($type, $_), @$x]
 	}
-	elsif(ref $type eq "HASH") {
-		_set_type($type, $_) for values %$x;
+	elsif(ref $x eq "HASH") {
+		+{ map ($_ => _set_type($type, $type->{$_})), keys %$x }
 	}
 	elsif(ref $type eq "SCALAR") {
-		_set_type($type, $$x);
+		\_set_type($type, $$x);
 	}
 	elsif($type eq "^") {
-		$_[1] = int $x;
+		int $x
 	}
 	elsif($type eq "~") {
-		$_[1] = "$x";
+		"$x"
 	}
 	elsif($type eq ".") {
-		$_[1] = $x+1.e-100;
+		$x+1.e-100
 	}
 	else {
 		die "_set_type($type): type does not exist"
@@ -226,9 +226,11 @@ sub _set_type {
 sub _set_params {
 	my ($query, $param) = @_;
 
-use DDP; p $query;
-
-	$query =~ s!:([~\.^])?([a-z_]\w*)! exists $param->{$2}? do { my $x = $param->{$2}; _set_type($1, $x) if defined $1; quote $x }: die "The :$1 parameter was not passed."!ige;
+	$query =~ s!:([~\.^])?([a-z_]\w*)!
+		exists $param->{$2}? do {
+			my $x = $param->{$2};
+			defined $1 ? quote _set_type($1, $x): quote $x
+		}: die "The :$1 parameter was not passed."!ige;
 	$query
 }
 
@@ -241,10 +243,10 @@ sub query_prepare (@) {
 		| ^(?<sep>[\ \t]*) (?<for>\w+)\*>> [\ \t]* (?<code>.*)
 		| (?<param> : [~\.^]? [a-z_]\w*)
 	!
-		exists $+{if}? ($param{$+{if}}? _set_params($+{code}, \%param): ""):
+		exists $+{if}? ($param{$+{if}}? $+{sep} . _set_params($+{code}, \%param): ""):
 		exists $+{for}? do {
-			my ($sep, $param, $code) = ($1, $2, $3);
-			join "\n", map { local $param{_} = $_; _set_params("$sep$code", \%param) } @{$param{$param}}
+			my ($sep, $param, $code) = @+{qw/sep for code/};
+			join "\n", map { local $param{'_'} = $_; _set_params("$sep$code", \%param) } @{$param{$param}}
 		}:
 		_set_params($+{param}, \%param)
 	!imgex;
