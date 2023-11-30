@@ -225,6 +225,9 @@ sub _set_type {
 
 sub _set_params {
 	my ($query, $param) = @_;
+
+use DDP; p $query;
+
 	$query =~ s!:([~\.^])?([a-z_]\w*)! exists $param->{$2}? do { my $x = $param->{$2}; _set_type($1, $x) if defined $1; quote $x }: die "The :$1 parameter was not passed."!ige;
 	$query
 }
