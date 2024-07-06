@@ -3,7 +3,7 @@ use 5.22.0;
 no strict; no warnings; no diagnostics;
 use common::sense;
 
-our $VERSION = "0.0.3";
+our $VERSION = "0.0.4";
 
 use Aion::Format qw//;
 use Aion::Format::Json qw//;
@@ -673,11 +673,11 @@ __END__
 
 =head1 NAME
 
-Aion::Query is a functional interface for accessing SQL databases (MySQL, MariaDB, Postgres and SQLite)
+Aion::Query - a functional interface for accessing SQL databases (MySQL, MariaDB, Postgres and SQLite)
 
 =head1 VERSION
 
-0.0.3
+0.0.4
 
 =head1 SYNOPSIS
 

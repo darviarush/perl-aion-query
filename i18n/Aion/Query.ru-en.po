@@ -2,7 +2,7 @@ msgid "# NAME"
 msgstr "#NAME"
 
 msgid "Aion::Query - функциональный интерфейс для доступа к базам данных SQL (MySQL, MariaDB, Postgres и SQLite)"
-msgstr "Aion::Query is a functional interface for accessing SQL databases (MySQL, MariaDB, Postgres and SQLite)"
+msgstr "Aion::Query - a functional interface for accessing SQL databases (MySQL, MariaDB, Postgres and SQLite)"
 
 msgid "0.0.3"
 msgstr "0.0.3"
@@ -255,3 +255,4 @@ msgstr "⚖ **GPLv3**"
 
 msgid "The Aion::Surf module is copyright © 2023 Yaroslav O. Kosmina. Rusland. All rights reserved."
 msgstr "The Aion::Surf module is copyright © 2023 Yaroslav O. Kosmina. Rusland. All rights reserved."
+

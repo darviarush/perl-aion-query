@@ -1,11 +1,11 @@
-!ru:en
+[![Actions Status](https://github.com/darviarush/perl-aion-query/actions/workflows/test.yml/badge.svg)](https://github.com/darviarush/perl-aion-query/actions) [![MetaCPAN Release](https://badge.fury.io/pl/Aion-Query.svg)](https://metacpan.org/release/Aion-Query)
 # NAME
 
 Aion::Query - функциональный интерфейс для доступа к базам данных SQL (MySQL, MariaDB, Postgres и SQLite)
 
 # VERSION
 
-0.0.3
+0.0.4
 
 # SYNOPSIS
 
