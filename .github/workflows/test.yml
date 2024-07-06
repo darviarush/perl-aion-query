@@ -27,4 +27,3 @@ jobs:
         run: cpanm -nq --installdeps --with-develop --with-recommends .
       - name: Run test
         run: prove -lr t
-
