@@ -5,7 +5,7 @@ Aion::Query - функциональный интерфейс для досту�
 
 # VERSION
 
-0.0.5
+0.0.6
 
 # SYNOPSIS
 
@@ -278,7 +278,7 @@ my $attaches = [
         {title => "Kiss in night", author_id => 1},
         {title => "Mir",           author_id => 1},
     ]},
-    {name => "Pushkin A.",   id => 2},
+    {name => "Pushkin A.",   id => 2, books => []},
     {name => "Alice",        id => 3, books => [
         {title => "Mips as cpu", author_id => 3},
     ]},

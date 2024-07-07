@@ -3,7 +3,7 @@ use 5.22.0;
 no strict; no warnings; no diagnostics;
 use common::sense;
 
-our $VERSION = "0.0.5";
+our $VERSION = "0.0.6";
 
 use Aion::Format qw//;
 use Aion::Format::Json qw//;
@@ -380,14 +380,14 @@ sub query_attach {
 	
 	($attach, my $key1, my $key2) = split /:/, $attach;
 
-	my %row = map { ($_->{$key1} => $_) } @$rows;
+	my %row1 = map { $_->{$attach} = []; ($_->{$key1} => $_) } @$rows;
 
 	my $rows2 = query $query, %kw;
 
 	for my $row2 (@$rows2) {
 		my $id = $row2->{$key2} // die "Not $key2 in query!";
-		my $row = $row{$id} // die "Not $key1=$id in main rows!";
-		push @{$row->{$attach}}, $row2;
+		my $row1 = $row1{$id} // die "Not $key1=$id in main rows!";
+		push @{$row1->{$attach}}, $row2;
 	}
 
 	wantarray? @$rows2: $rows2
@@ -679,7 +679,7 @@ Aion::Query - a functional interface for accessing SQL databases (MySQL, MariaDB
 
 =head1 VERSION
 
-0.0.5
+0.0.6
 
 =head1 SYNOPSIS
 
@@ -928,7 +928,7 @@ The function returns an array with the result of the query (C<$query>), into whi
 	        {title => "Kiss in night", author_id => 1},
 	        {title => "Mir",           author_id => 1},
 	    ]},
-	    {name => "Pushkin A.",   id => 2},
+	    {name => "Pushkin A.",   id => 2, books => []},
 	    {name => "Alice",        id => 3, books => [
 	        {title => "Mips as cpu", author_id => 3},
 	    ]},

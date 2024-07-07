@@ -5,7 +5,7 @@ use common::sense; use open qw/:std :utf8/;  use Carp qw//; use File::Basename q
 # 
 # # VERSION
 # 
-# 0.0.4
+# 0.0.5
 # 
 # # SYNOPSIS
 # 
@@ -278,7 +278,7 @@ my $attaches = [
         {title => "Kiss in night", author_id => 1},
         {title => "Mir",           author_id => 1},
     ]},
-    {name => "Pushkin A.",   id => 2},
+    {name => "Pushkin A.",   id => 2, books => []},
     {name => "Alice",        id => 3, books => [
         {title => "Mips as cpu", author_id => 3},
     ]},

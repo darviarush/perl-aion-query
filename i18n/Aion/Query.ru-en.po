@@ -4,8 +4,8 @@ msgstr "#NAME"
 msgid "Aion::Query - функциональный интерфейс для доступа к базам данных SQL (MySQL, MariaDB, Postgres и SQLite)"
 msgstr "Aion::Query - a functional interface for accessing SQL databases (MySQL, MariaDB, Postgres and SQLite)"
 
-msgid "0.0.4"
-msgstr "0.0.4"
+msgid "0.0.5"
+msgstr "0.0.5"
 
 msgid "File .config.pm:"
 msgstr "File .config.pm:"
