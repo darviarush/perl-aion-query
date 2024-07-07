@@ -71,7 +71,7 @@
          "web" : "https://github.com/darviarush/perl-aion-query"
       }
    },
-   "version" : "0.0.4",
+   "version" : "0.0.5",
    "x_authority" : "cpan:DART",
    "x_contributors" : [
       "Yaroslav O. Kosmina <dart@cpan.org>",
